@@ -16,22 +16,45 @@ class ChromeHistoryReader
 
   MAX_VISITS = 200_000
 
+  # Core page transition types (lower 8 bits of transition column)
+  TRANSITION_LINK      = 0
+  TRANSITION_TYPED     = 1
+  TRANSITION_GENERATED = 5
+  TRANSITION_FORM      = 7
+  TRANSITION_RELOAD    = 8
+  TRANSITION_KEYWORD   = 9
+  TRANSITION_KEYWORD_G = 10
+
   def self.available?
     history_paths.any?
   end
 
+  # Returns { entries: [...], searches: [...] }
   def self.read
     paths = history_paths
     raise "Chrome/Chromium history not found. Make sure Chrome has been used at least once." if paths.empty?
 
-    all_entries = paths.flat_map { |p| read_file(p) }
+    all_entries = []
+    all_searches = []
+
+    paths.each do |path|
+      data = read_file(path)
+      all_entries.concat(data[:entries])
+      all_searches.concat(data[:searches])
+    end
+
     raise "No history entries found in Chrome." if all_entries.empty?
 
-    # De-duplicate across profiles and sort newest first
-    all_entries
+    entries = all_entries
       .uniq { |e| [e[:url], e[:visited_at]&.to_i] }
       .sort_by { |e| -(e[:visited_at]&.to_i || 0) }
       .first(MAX_VISITS)
+
+    searches = all_searches
+      .uniq { |s| [s[:query], s[:visited_at]&.to_i] }
+      .sort_by { |s| -(s[:visited_at]&.to_i || 0) }
+
+    { entries: entries, searches: searches }
   end
 
   def self.history_paths
@@ -46,11 +69,12 @@ class ChromeHistoryReader
   def self.read_file(path)
     tmp = File.join(Dir.tmpdir, "bwrapped_#{SecureRandom.hex(6)}.db")
     copy_db(path, tmp)
-    entries = query_entries(tmp)
-    entries
+    entries  = query_entries(tmp)
+    searches = query_keyword_searches(tmp)
+    { entries: entries, searches: searches }
   rescue => e
     Rails.logger.warn("ChromeHistoryReader: skipping #{path} — #{e.message}")
-    []
+    { entries: [], searches: [] }
   ensure
     cleanup(tmp)
   end
@@ -63,14 +87,14 @@ class ChromeHistoryReader
     raise "Cannot read Chrome history file (permission denied): #{e.message}"
   end
 
-  # Use array indexing — avoids results_as_hash key-type differences across sqlite3 versions.
-  # Column order: 0=url, 1=title, 2=visit_time
+  # Column order: 0=url, 1=title, 2=typed_count, 3=visit_time, 4=visit_duration, 5=transition
   def self.query_entries(db_path)
     db = SQLite3::Database.new(db_path, { readonly: true })
     db.busy_timeout = 2000
 
     db.execute(<<~SQL).filter_map { |row| parse_row(row) }
-      SELECT u.url, u.title, v.visit_time
+      SELECT u.url, u.title, u.typed_count,
+             v.visit_time, v.visit_duration, v.transition
       FROM visits v
       INNER JOIN urls u ON u.id = v.url
       WHERE u.url LIKE 'http%'
@@ -81,10 +105,47 @@ class ChromeHistoryReader
     db&.close
   end
 
+  def self.query_keyword_searches(db_path)
+    db = SQLite3::Database.new(db_path, { readonly: true })
+    db.busy_timeout = 2000
+
+    has_table = db.execute(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='keyword_search_terms'"
+    ).flatten.any?
+    return [] unless has_table
+
+    db.execute(<<~SQL).filter_map do |row|
+      SELECT k.term, v.visit_time
+      FROM keyword_search_terms k
+      JOIN urls u ON u.id = k.url_id
+      JOIN visits v ON v.url = u.id
+      WHERE k.term IS NOT NULL AND length(trim(k.term)) >= 2
+      ORDER BY v.visit_time DESC
+      LIMIT 20000
+    SQL
+      term = row[0].to_s.strip
+      next if term.length < 2
+      { query: term, visited_at: chrome_time(row[1]) }
+    end
+  rescue => e
+    Rails.logger.warn("ChromeHistoryReader: keyword_search_terms error — #{e.message}")
+    []
+  ensure
+    db&.close
+  end
+
   def self.parse_row(row)
     url = row[0]
     return nil unless url.is_a?(String) && url.start_with?("http")
-    { url: url, title: row[1].to_s, visited_at: chrome_time(row[2]), visit_count: 1 }
+    {
+      url: url,
+      title: row[1].to_s,
+      typed_count: row[2].to_i,
+      visited_at: chrome_time(row[3]),
+      visit_duration: row[4].to_i,   # microseconds; 0 means unknown
+      transition: row[5].to_i & 0xFF, # strip qualifier bits, keep core type
+      visit_count: 1,
+    }
   end
 
   # Chrome stores times as microseconds since Jan 1, 1601 (Windows FILETIME)

@@ -32,9 +32,11 @@ module Api
           return render json: { error: "Chrome history not found on this machine." }, status: :not_found
         end
 
-        entries = ChromeHistoryReader.read
+        chrome_data = ChromeHistoryReader.read
+        entries  = chrome_data[:entries]
+        searches = chrome_data[:searches]
 
-        result = HistoryAnalyzer.new(entries).analyze
+        result = HistoryAnalyzer.new(entries, chrome_searches: searches).analyze
         result[:meta] = { total_entries_parsed: entries.size, source: "chrome_direct", processed_at: Time.current.iso8601 }
 
         render json: result
