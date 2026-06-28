@@ -16,8 +16,43 @@ class HistoryAnalyzer
     /youtube\.com\/results/, /google\.com\/\?q=/, /google\.com\/#q=/,
   ].freeze
 
-  SESSION_GAP_SECS = 30 * 60
-  MAX_PAGE_DURATION_USEC = 2 * 3_600_000_000  # cap individual page at 2 hours
+  SESSION_GAP_SECS     = 30 * 60
+  MAX_PAGE_DURATION_US = 2 * 3_600_000_000  # cap at 2h per page
+
+  PERSONAS = [
+    { id: "builder",    title: "The Builder",
+      test: ->(t, _) { t["Programming"].to_f + t["Cloud & DevOps"].to_f >= 25 },
+      description: "Your history reads like a library of docs, repos, and Stack Overflow answers. You ship things.",
+      color: "#6366f1" },
+    { id: "ai_pioneer", title: "The AI Pioneer",
+      test: ->(t, _) { t["AI & ML"].to_f >= 14 },
+      description: "Living in the future. You're deeply embedded in the AI revolution before most people know what's happening.",
+      color: "#a855f7" },
+    { id: "researcher", title: "The Deep Researcher",
+      test: ->(t, _) { t["Education"].to_f + t["Science"].to_f + t["Reference"].to_f >= 20 },
+      description: "You treat the web like a library. Wikipedia is just the beginning — you go to primary sources.",
+      color: "#06b6d4" },
+    { id: "info_broker", title: "The Info Broker",
+      test: ->(t, _) { t["News"].to_f + t["Tech News"].to_f >= 22 },
+      description: "First to know, always informed. The pulse of the internet runs through you.",
+      color: "#f59e0b" },
+    { id: "connector",  title: "The Social Connector",
+      test: ->(t, _) { t["Social Media"].to_f >= 22 },
+      description: "Your internet is people-first. You connect, share, and engage across platforms.",
+      color: "#ec4899" },
+    { id: "creative",   title: "The Creative",
+      test: ->(t, _) { t["Design"].to_f >= 12 },
+      description: "At the intersection of craft and aesthetics. Your browser is a mood board.",
+      color: "#f472b6" },
+    { id: "streamer",   title: "The Content Explorer",
+      test: ->(t, _) { t["Entertainment"].to_f >= 20 },
+      description: "Endlessly curious about what's out there. You follow rabbit holes for hours.",
+      color: "#10b981" },
+    { id: "polymath",   title: "The Digital Polymath",
+      test: ->(_, _) { true },  # default
+      description: "No single obsession. You browse widely, connect dots others miss, and keep everyone guessing.",
+      color: "#8b5cf6" },
+  ].freeze
 
   def initialize(entries, chrome_searches: [])
     @entries = entries
@@ -29,20 +64,24 @@ class HistoryAnalyzer
     return empty_result if @entries.empty?
 
     {
-      summary:        build_summary,
-      topics:         build_topics,
-      time_by_topic:  build_time_by_topic,
-      daily_pattern:  build_daily_pattern,
-      weekly_pattern: build_weekly_pattern,
-      monthly_trends: build_monthly_trends,
-      heatmap:        build_heatmap,
-      sessions:       sessions_data,
-      top_domains:    build_top_domains,
-      top_pages:      build_top_pages,
-      top_searches:   build_top_searches,
-      chrome_searches: build_chrome_searches,
-      intent:         build_intent_analysis,
-      knowledge_graph: build_knowledge_graph,
+      summary:          build_summary,
+      persona:          build_persona,
+      topics:           build_topics,
+      time_by_topic:    build_time_by_topic,
+      daily_pattern:    build_daily_pattern,
+      weekly_pattern:   build_weekly_pattern,
+      monthly_trends:   build_monthly_trends,
+      heatmap:          build_heatmap,
+      activity_calendar: build_activity_calendar,
+      sessions:         sessions_data,
+      streaks:          build_streaks,
+      topic_momentum:   build_topic_momentum,
+      top_domains:      build_top_domains,
+      top_pages:        build_top_pages,
+      top_searches:     build_top_searches,
+      chrome_searches:  build_chrome_searches,
+      intent:           build_intent_analysis,
+      knowledge_graph:  build_knowledge_graph,
     }
   end
 
@@ -61,10 +100,10 @@ class HistoryAnalyzer
   end
 
   def has_duration_data?
-    @has_duration ||= @entries.count { |e| e[:visit_duration].to_i > 0 } > @entries.size * 0.1
+    @has_duration ||= @entries.count { |e| e[:effective_duration].to_i > 0 } > @entries.size * 0.05
   end
 
-  # ─── Memoized session computation ─────────────────────────────────────────
+  # ─── Sessions (memoized) ─────────────────────────────────────────────────
 
   def sessions_data
     @sessions_data ||= compute_sessions
@@ -76,20 +115,18 @@ class HistoryAnalyzer
     end
 
     sorted = timed.sort_by { |e| e[:visited_at] }
-
     sessions = [[sorted.first]]
     sorted.each_cons(2) do |a, b|
-      gap = (b[:visited_at] - a[:visited_at]).abs
-      gap > SESSION_GAP_SECS ? (sessions << [b]) : (sessions.last << b)
+      (b[:visited_at] - a[:visited_at]).abs > SESSION_GAP_SECS ? (sessions << [b]) : (sessions.last << b)
     end
 
     durations_min = sessions.map do |s|
       if s.size == 1
-        dur = s[0][:visit_duration].to_i / 60_000_000.0
+        dur = s[0][:effective_duration].to_i / 60_000_000.0
         dur > 0.1 ? dur : 0.0
       else
         span = (s.last[:visited_at] - s.first[:visited_at]).to_f / 60
-        last_dur = [s.last[:visit_duration].to_i / 60_000_000.0, 30.0].min
+        last_dur = [s.last[:effective_duration].to_i / 60_000_000.0, 30.0].min
         span + last_dur
       end
     end.select { |d| d > 0 }
@@ -104,7 +141,92 @@ class HistoryAnalyzer
     }
   end
 
-  # ─── Summary ──────────────────────────────────────────────────────────────
+  # ─── Topics (memoized) ───────────────────────────────────────────────────
+
+  def build_topics
+    @topics_cache ||= begin
+      counts = Hash.new(0)
+      categorized.each { |e| counts[e[:topic]] += e[:visit_count] }
+      total = counts.values.sum.to_f
+
+      counts.map do |name, visits|
+        { name: name, visits: visits, percentage: ((visits / total) * 100).round(1),
+          color: UrlCategorizer::CATEGORY_COLORS[name] || "#475569" }
+      end.sort_by { |t| -t[:visits] }
+    end
+  end
+
+  # ─── Persona ─────────────────────────────────────────────────────────────
+
+  def build_persona
+    # Compute percentages relative to meaningful visits (excluding Other + Search)
+    relevant = build_topics.reject { |t| ["Other", "Search"].include?(t[:name]) }
+    rel_total = relevant.sum { |t| t[:visits] }.to_f
+    pct = rel_total > 0 ?
+            relevant.map { |t| [t[:name], (t[:visits] / rel_total * 100).round(1)] }.to_h :
+            build_topics.map { |t| [t[:name], t[:percentage]] }.to_h
+
+    # Also consider time-based data if available
+    time_pct = {}
+    if has_duration_data?
+      time_rel = build_time_by_topic.reject { |t| ["Other", "Search"].include?(t[:name]) }
+      time_total = time_rel.sum { |t| t[:hours] }.to_f
+      time_pct = time_total > 0 ?
+                   time_rel.map { |t| [t[:name], (t[:hours] / time_total * 100).round(1)] }.to_h : {}
+    end
+
+    # Effective percentage: max of visit-based and time-based
+    eff = ->(k) { [pct[k].to_f, time_pct[k].to_f].max }
+
+    sd = sessions_data
+
+    persona = PERSONAS.find { |p| p[:test].(pct.merge("_eff" => eff), sd) } || PERSONAS.last
+
+    # Re-match using effective percentages
+    if persona[:id] == "polymath"
+      persona = if eff.("Programming") + eff.("Cloud & DevOps") >= 25
+        PERSONAS.find { |p| p[:id] == "builder" }
+      elsif eff.("AI & ML") >= 15
+        PERSONAS.find { |p| p[:id] == "ai_pioneer" }
+      elsif eff.("Education") + eff.("Science") + eff.("Reference") >= 20
+        PERSONAS.find { |p| p[:id] == "researcher" }
+      elsif eff.("News") + eff.("Tech News") >= 22
+        PERSONAS.find { |p| p[:id] == "info_broker" }
+      elsif eff.("Social Media") >= 22
+        PERSONAS.find { |p| p[:id] == "connector" }
+      elsif eff.("Design") >= 12
+        PERSONAS.find { |p| p[:id] == "creative" }
+      elsif eff.("Entertainment") >= 20
+        PERSONAS.find { |p| p[:id] == "streamer" }
+      else
+        PERSONAS.last
+      end || PERSONAS.last
+    end
+
+    # Secondary traits
+    peak_h = has_timestamps? ? (build_daily_pattern.max_by { |h| h[:visits] }&.dig(:hour) || 12) : 12
+    traits = []
+    traits << "Night Owl"         if peak_h >= 22 || peak_h <= 3
+    traits << "Early Riser"       if peak_h >= 5 && peak_h <= 8
+    traits << "Deep Diver"        if sd[:avg_duration_minutes].to_f >= 25
+    traits << "Speed Surfer"      if sd[:avg_duration_minutes].to_f < 8 && sd[:total_sessions].to_i > 40
+    traits << "Polymath"          if build_topics.select { |t| t[:visits] > 5 }.size >= 9
+    traits << "AI Enthusiast"     if eff.("AI & ML") >= 10 && persona[:id] != "ai_pioneer"
+    traits << "Productivity Nerd" if eff.("Productivity") >= 7
+    traits << "Data Scientist"    if eff.("Data Science") >= 5
+    traits << "Finance Watcher"   if eff.("Finance") >= 8
+
+    # Top stat: pick most meaningful categorized topic
+    top_t = relevant.max_by { |t| t[:visits] }
+    stat_label = top_t ? "#{top_t[:name]} · #{top_t[:percentage]}% of categorized visits" : nil
+
+    persona.slice(:id, :title, :description, :color).merge(
+      traits:     traits.first(4),
+      stat_label: stat_label,
+    )
+  end
+
+  # ─── Summary ─────────────────────────────────────────────────────────────
 
   def build_summary
     total_visits   = @entries.sum { |e| e[:visit_count] }
@@ -116,7 +238,7 @@ class HistoryAnalyzer
 
     total_days = dates.any? ? (dates.max - dates.min + 1).to_i : nil
     sd = sessions_data
-    avg_daily = (total_days && total_days > 0 && sd[:total_hours_browsed] > 0) ?
+    avg_daily = (total_days.to_i > 0 && sd[:total_hours_browsed] > 0) ?
                   ((sd[:total_hours_browsed] * 60) / total_days).round(1) : nil
 
     peak = build_daily_pattern.max_by { |h| h[:visits] }
@@ -141,25 +263,6 @@ class HistoryAnalyzer
     }
   end
 
-  # ─── Topics ───────────────────────────────────────────────────────────────
-
-  def build_topics
-    @topics_cache ||= begin
-      counts = Hash.new(0)
-      categorized.each { |e| counts[e[:topic]] += e[:visit_count] }
-      total = counts.values.sum.to_f
-
-      counts.map do |name, visits|
-        {
-          name:       name,
-          visits:     visits,
-          percentage: ((visits / total) * 100).round(1),
-          color:      UrlCategorizer::CATEGORY_COLORS[name] || "#475569",
-        }
-      end.sort_by { |t| -t[:visits] }
-    end
-  end
-
   # ─── Time by topic ────────────────────────────────────────────────────────
 
   def build_time_by_topic
@@ -169,9 +272,9 @@ class HistoryAnalyzer
     topic_visits = Hash.new(0)
 
     categorized.each do |e|
-      dur = e[:visit_duration].to_i
+      dur = e[:effective_duration].to_i
       next unless dur > 0
-      capped = [dur, MAX_PAGE_DURATION_USEC].min
+      capped = [dur, MAX_PAGE_DURATION_US].min
       topic_usec[e[:topic]]   += capped
       topic_visits[e[:topic]] += 1
     end
@@ -181,30 +284,28 @@ class HistoryAnalyzer
     total_usec = topic_usec.values.sum.to_f
 
     topic_usec.map do |name, usec|
-      {
-        name:                 name,
+      { name: name,
         minutes:              (usec / 60_000_000.0).round(1),
         hours:                (usec / 3_600_000_000.0).round(2),
         visits_with_duration: topic_visits[name],
         percentage:           total_usec > 0 ? ((usec / total_usec) * 100).round(1) : 0,
-        color:                UrlCategorizer::CATEGORY_COLORS[name] || "#475569",
-      }
+        color:                UrlCategorizer::CATEGORY_COLORS[name] || "#475569" }
     end.select { |t| t[:minutes] > 0 }.sort_by { |t| -t[:minutes] }
   end
 
   # ─── Daily / Weekly ───────────────────────────────────────────────────────
 
   def build_daily_pattern
-    hours = Array.new(24) { |h| { hour: h, visits: 0 } }
-    return hours unless has_timestamps?
-
-    timed.each { |e| hours[e[:visited_at].hour][:visits] += e[:visit_count] }
-    hours
+    @daily_pattern ||= begin
+      hours = Array.new(24) { |h| { hour: h, visits: 0 } }
+      return hours unless has_timestamps?
+      timed.each { |e| hours[e[:visited_at].hour][:visits] += e[:visit_count] }
+      hours
+    end
   end
 
   def build_weekly_pattern
     return [] unless has_timestamps?
-
     day_names = %w[Sun Mon Tue Wed Thu Fri Sat]
     counts    = Array.new(7, 0)
     timed.each { |e| counts[e[:visited_at].wday] += e[:visit_count] }
@@ -215,11 +316,7 @@ class HistoryAnalyzer
 
   def build_monthly_trends
     return { labels: [], data: [] } unless has_timestamps?
-
-    top_topics = build_topics
-      .reject { |t| t[:name] == "Search" }
-      .first(6)
-      .map { |t| t[:name] }
+    top_topics = build_topics.reject { |t| t[:name] == "Search" }.first(6).map { |t| t[:name] }
 
     monthly = Hash.new { |h, k| h[k] = Hash.new(0) }
     timed.each do |e|
@@ -227,33 +324,107 @@ class HistoryAnalyzer
       monthly[e[:visited_at].strftime("%Y-%m")][e[:topic]] += e[:visit_count]
     end
 
-    data = monthly.sort.map do |month, topic_counts|
+    data = monthly.sort.map do |month, tc|
       row = { month: month }
-      top_topics.each { |t| row[t] = topic_counts[t] }
+      top_topics.each { |t| row[t] = tc[t] }
       row
     end
-
     { labels: top_topics, data: data }
   end
 
-  # ─── Heatmap (7 days × 24 hours) ─────────────────────────────────────────
+  # ─── Heatmap (7 × 24) ────────────────────────────────────────────────────
 
   def build_heatmap
-    grid = Array.new(7) { Array.new(24, 0) }
+    grid   = Array.new(7) { Array.new(24, 0) }
     labels = %w[Sun Mon Tue Wed Thu Fri Sat]
-
     unless has_timestamps?
       return { grid: grid, max: 0, day_labels: labels }
     end
-
-    timed.each do |e|
-      grid[e[:visited_at].wday][e[:visited_at].hour] += e[:visit_count]
-    end
-
+    timed.each { |e| grid[e[:visited_at].wday][e[:visited_at].hour] += e[:visit_count] }
     { grid: grid, max: grid.flatten.max, day_labels: labels }
   end
 
-  # ─── Top domains ──────────────────────────────────────────────────────────
+  # ─── Activity calendar (per-day, last 52 weeks) ──────────────────────────
+
+  def build_activity_calendar
+    return { days: [], max: 0 } unless has_timestamps?
+
+    daily = Hash.new(0)
+    timed.each { |e| daily[e[:visited_at].to_date] += e[:visit_count] }
+    return { days: [], max: 0 } if daily.empty?
+
+    end_date   = Date.today
+    start_date = [daily.keys.min, end_date - 364].max
+    start_date -= start_date.wday  # align to Sunday
+
+    days = (start_date..end_date).map { |d| { date: d.iso8601, visits: daily[d] || 0 } }
+    { days: days, max: daily.values.max }
+  end
+
+  # ─── Streaks ─────────────────────────────────────────────────────────────
+
+  def build_streaks
+    return { current: 0, longest: 0, total_active_days: 0 } unless has_timestamps?
+
+    dates   = timed.map { |e| e[:visited_at].to_date }.uniq.sort
+    return { current: 0, longest: 0, total_active_days: dates.size } if dates.empty?
+
+    longest = 1; run = 1
+    dates.each_cons(2) do |a, b|
+      (b - a).to_i == 1 ? (run += 1; longest = [longest, run].max) : (run = 1)
+    end
+
+    today    = Date.today
+    date_set = dates.to_set
+    current  = 0
+    check    = date_set.include?(today) ? today : (date_set.include?(today - 1) ? today - 1 : nil)
+    while check && date_set.include?(check)
+      current += 1; check -= 1
+    end
+
+    {
+      current:          current,
+      longest:          longest,
+      total_active_days: dates.size,
+      last_active:      dates.last.iso8601,
+    }
+  end
+
+  # ─── Topic momentum (first half vs second half) ───────────────────────────
+
+  def build_topic_momentum
+    return { rising: [], falling: [] } unless has_timestamps? && timed.size >= 30
+
+    sorted = timed.sort_by { |e| e[:visited_at] }
+    mid    = sorted.size / 2
+    first  = sorted.first(mid)
+    second = sorted.last(sorted.size - mid)
+
+    pct = ->(arr) {
+      c = Hash.new(0); arr.each { |e| c[e[:topic]] += e[:visit_count] }
+      total = c.values.sum.to_f
+      c.transform_values { |v| total > 0 ? (v / total * 100).round(1) : 0 }
+    }
+
+    f = pct.(first); s = pct.(second)
+    all = (f.keys + s.keys).uniq
+
+    momentum = all.filter_map do |t|
+      delta = (s[t] || 0) - (f[t] || 0)
+      next if delta.abs < 0.5
+      { topic: t, first_pct: f[t] || 0, second_pct: s[t] || 0, delta: delta.round(1),
+        color: UrlCategorizer::CATEGORY_COLORS[t] || "#475569" }
+    end.sort_by { |m| -m[:delta].abs }
+
+    {
+      rising:       momentum.select { |m| m[:delta] > 0 }.first(5),
+      falling:      momentum.select { |m| m[:delta] < 0 }.first(5),
+      first_label:  sorted[0][:visited_at].strftime("%b"),
+      second_label: sorted[-1][:visited_at].strftime("%b %Y"),
+    }
+  end
+
+  # ─── Top domains ─────────────────────────────────────────────────────────
 
   def build_top_domains
     counts = Hash.new(0)
@@ -276,23 +447,16 @@ class HistoryAnalyzer
       next if SEARCH_URL_PATTERNS.any? { |p| url =~ p }
       url_data[url][:count]    += e[:visit_count]
       url_data[url][:title]    ||= e[:title].presence
-      url_data[url][:duration] += e[:visit_duration].to_i
+      url_data[url][:duration] += e[:effective_duration].to_i
     end
 
     url_data.sort_by { |_, d| -d[:count] }.first(15).map do |url, d|
       topic  = @categorizer.categorize(url)
       domain = extract_domain(url)
       title  = (d[:title].presence || domain)[0..80]
-      dur_min = [d[:duration] / 60_000_000.0, MAX_PAGE_DURATION_USEC / 60_000_000.0].min.round(1)
-      {
-        url:          url,
-        title:        title,
-        visits:       d[:count],
-        domain:       domain,
-        duration_min: dur_min > 0 ? dur_min : nil,
-        topic:        topic,
-        color:        UrlCategorizer::CATEGORY_COLORS[topic] || "#475569",
-      }
+      dur_min = d[:duration] > 0 ? [[d[:duration] / 60_000_000.0, MAX_PAGE_DURATION_US / 60_000_000.0].min.round(1), nil].compact.first : nil
+      { url: url, title: title, visits: d[:count], domain: domain, duration_min: dur_min,
+        topic: topic, color: UrlCategorizer::CATEGORY_COLORS[topic] || "#475569" }
     end
   end
 
@@ -300,77 +464,65 @@ class HistoryAnalyzer
 
   def build_top_searches
     counts = Hash.new(0)
-
     @entries.each do |entry|
       url = entry[:url]
       SEARCH_QUERY_PARAMS.each do |pattern, param|
         next unless url =~ pattern
         begin
-          uri = URI.parse(url)
+          uri   = URI.parse(url)
           query = CGI.parse(uri.query || "")[param]&.first
           next unless query && query.length >= 3
           q = CGI.unescape(query).gsub("+", " ").strip
           counts[q] += entry[:visit_count] if q.length >= 3
-        rescue
-          next
+        rescue; next
         end
       end
     end
-
     counts.sort_by { |_, v| -v }.first(30).map { |q, c| { query: q, count: c } }
   end
 
   def build_chrome_searches
     return [] if @chrome_searches.empty?
-
     counts = Hash.new(0)
     @chrome_searches.each { |s| counts[s[:query]] += 1 }
-
-    counts
-      .reject { |q, _| q.strip.length < 2 }
-      .sort_by { |_, v| -v }
-      .first(50)
-      .map { |q, c| { query: q, count: c } }
+    counts.reject { |q, _| q.strip.length < 2 }
+          .sort_by { |_, v| -v }.first(50)
+          .map { |q, c| { query: q, count: c } }
   end
 
-  # ─── Intent analysis ──────────────────────────────────────────────────────
+  # ─── Intent analysis ─────────────────────────────────────────────────────
 
   def build_intent_analysis
     typed_n = 0; search_n = 0; link_n = 0; other_n = 0
     domain_typed = Hash.new(0)
 
     categorized.each do |e|
-      t = e[:transition].to_i
-      case t
-      when 1 then typed_n += 1  # TYPED
-      when 5, 9, 10 then search_n += 1  # GENERATED / KEYWORD
-      when 0 then link_n += 1   # LINK
-      else other_n += 1
+      case e[:transition].to_i
+      when 1        then typed_n  += 1
+      when 5, 9, 10 then search_n += 1
+      when 0        then link_n   += 1
+      else               other_n  += 1
       end
-
       tc = e[:typed_count].to_i
       domain_typed[extract_domain(e[:url])] += tc if tc > 0
     end
 
     total = categorized.size.to_f
-
     {
-      typed_pct:     total > 0 ? ((typed_n  / total) * 100).round(1) : 0,
-      search_pct:    total > 0 ? ((search_n / total) * 100).round(1) : 0,
-      link_pct:      total > 0 ? ((link_n   / total) * 100).round(1) : 0,
-      other_pct:     total > 0 ? ((other_n  / total) * 100).round(1) : 0,
-      typed_count:   typed_n,
-      link_count:    link_n,
-      search_count:  search_n,
-      top_intentional: domain_typed
-        .select { |_, v| v > 0 }
-        .sort_by { |_, v| -v }
-        .first(10)
-        .map { |d, c| { domain: d, typed_count: c } },
+      typed_pct:    total > 0 ? ((typed_n  / total) * 100).round(1) : 0,
+      search_pct:   total > 0 ? ((search_n / total) * 100).round(1) : 0,
+      link_pct:     total > 0 ? ((link_n   / total) * 100).round(1) : 0,
+      other_pct:    total > 0 ? ((other_n  / total) * 100).round(1) : 0,
+      typed_count:  typed_n,
+      link_count:   link_n,
+      search_count: search_n,
+      top_intentional: domain_typed.select { |_, v| v > 0 }
+                                   .sort_by { |_, v| -v }.first(10)
+                                   .map { |d, c| { domain: d, typed_count: c } },
     }
   end
 
-  # ─── Knowledge graph ──────────────────────────────────────────────────────
+  # ─── Knowledge graph ─────────────────────────────────────────────────────
 
   def build_knowledge_graph
     top_topics  = build_topics.first(12)
@@ -380,11 +532,9 @@ class HistoryAnalyzer
       { id: t[:name], label: t[:name], size: Math.sqrt(t[:visits]).ceil, visits: t[:visits], color: t[:color] }
     end
 
-    edges = if has_timestamps? && timed.size > 20
-      build_edges_by_cooccurrence(topic_names)
-    else
-      build_edges_by_domain_overlap(topic_names)
-    end
+    edges = has_timestamps? && timed.size > 20 ?
+              build_edges_by_cooccurrence(topic_names) :
+              build_edges_by_domain_overlap(topic_names)
 
     { nodes: nodes, edges: edges }
   end
@@ -394,7 +544,7 @@ class HistoryAnalyzer
     co = Hash.new(0)
     sorted.each_cons(8) do |group|
       topics = group.map { |e| e[:topic] }.select { |t| topic_names.include?(t) }.uniq
-      topics.combination(2) { |a, b| co[[ a, b ].sort.join("|")] += 1 }
+      topics.combination(2) { |a, b| co[[a, b].sort.join("|")] += 1 }
     end
     co.sort_by { |_, w| -w }.first(20).filter_map do |key, weight|
       a, b = key.split("|")
@@ -405,7 +555,6 @@ class HistoryAnalyzer
   def build_edges_by_domain_overlap(topic_names)
     topic_domains = Hash.new { |h, k| h[k] = Set.new }
     categorized.each { |e| topic_domains[e[:topic]] << extract_domain(e[:url]) }
-
     edges = []
     topic_names.to_a.combination(2) do |a, b|
       common = (topic_domains[a] & topic_domains[b]).size
@@ -414,7 +563,7 @@ class HistoryAnalyzer
     edges.sort_by { |e| -e[:weight] }.first(15)
   end
 
-  # ─── Helpers ──────────────────────────────────────────────────────────────
+  # ─── Helpers ─────────────────────────────────────────────────────────────
 
   def extract_domain(url)
     return "unknown" unless url
@@ -431,20 +580,24 @@ class HistoryAnalyzer
 
   def empty_result
     {
-      summary:         { total_visits: 0, unique_domains: 0, has_timestamps: false, has_duration_data: false, total_hours_browsed: 0 },
-      topics:          [],
-      time_by_topic:   [],
-      daily_pattern:   Array.new(24) { |h| { hour: h, visits: 0 } },
-      weekly_pattern:  [],
-      monthly_trends:  { labels: [], data: [] },
-      heatmap:         { grid: Array.new(7) { Array.new(24, 0) }, max: 0, day_labels: %w[Sun Mon Tue Wed Thu Fri Sat] },
-      sessions:        { total_sessions: 0, avg_duration_minutes: 0, longest_session_minutes: 0, total_hours_browsed: 0 },
-      top_domains:     [],
-      top_pages:       [],
-      top_searches:    [],
-      chrome_searches: [],
-      intent:          { typed_pct: 0, search_pct: 0, link_pct: 0, other_pct: 0, top_intentional: [] },
-      knowledge_graph: { nodes: [], edges: [] },
+      summary:          { total_visits: 0, unique_domains: 0, has_timestamps: false, has_duration_data: false, total_hours_browsed: 0 },
+      persona:          { id: "polymath", title: "The Digital Polymath", description: "", color: "#8b5cf6", traits: [] },
+      topics:           [],
+      time_by_topic:    [],
+      daily_pattern:    Array.new(24) { |h| { hour: h, visits: 0 } },
+      weekly_pattern:   [],
+      monthly_trends:   { labels: [], data: [] },
+      heatmap:          { grid: Array.new(7) { Array.new(24, 0) }, max: 0, day_labels: %w[Sun Mon Tue Wed Thu Fri Sat] },
+      activity_calendar: { days: [], max: 0 },
+      sessions:         { total_sessions: 0, avg_duration_minutes: 0, longest_session_minutes: 0, total_hours_browsed: 0 },
+      streaks:          { current: 0, longest: 0, total_active_days: 0 },
+      topic_momentum:   { rising: [], falling: [] },
+      top_domains:      [],
+      top_pages:        [],
+      top_searches:     [],
+      chrome_searches:  [],
+      intent:           { typed_pct: 0, search_pct: 0, link_pct: 0, other_pct: 0, top_intentional: [] },
+      knowledge_graph:  { nodes: [], edges: [] },
     }
   end
 end

@@ -16,15 +16,6 @@ class ChromeHistoryReader
 
   MAX_VISITS = 200_000
 
-  # Core page transition types (lower 8 bits of transition column)
-  TRANSITION_LINK      = 0
-  TRANSITION_TYPED     = 1
-  TRANSITION_GENERATED = 5
-  TRANSITION_FORM      = 7
-  TRANSITION_RELOAD    = 8
-  TRANSITION_KEYWORD   = 9
-  TRANSITION_KEYWORD_G = 10
-
   def self.available?
     history_paths.any?
   end
@@ -87,20 +78,43 @@ class ChromeHistoryReader
     raise "Cannot read Chrome history file (permission denied): #{e.message}"
   end
 
-  # Column order: 0=url, 1=title, 2=typed_count, 3=visit_time, 4=visit_duration, 5=transition
+  # Column order:
+  # 0=url 1=title 2=typed_count 3=visit_time 4=visit_duration
+  # 5=transition 6=visit_id 7=fg_duration (from context_annotations, may be 0)
   def self.query_entries(db_path)
     db = SQLite3::Database.new(db_path, { readonly: true })
     db.busy_timeout = 2000
 
-    db.execute(<<~SQL).filter_map { |row| parse_row(row) }
-      SELECT u.url, u.title, u.typed_count,
-             v.visit_time, v.visit_duration, v.transition
-      FROM visits v
-      INNER JOIN urls u ON u.id = v.url
-      WHERE u.url LIKE 'http%'
-      ORDER BY v.visit_time DESC
-      LIMIT #{MAX_VISITS}
-    SQL
+    # LEFT JOIN context_annotations for total_foreground_duration (actual foreground time)
+    has_ca = db.execute(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='context_annotations'"
+    ).flatten.any?
+
+    sql = if has_ca
+      <<~SQL
+        SELECT u.url, u.title, u.typed_count,
+               v.visit_time, v.visit_duration, v.transition, v.id,
+               COALESCE(ca.total_foreground_duration, 0) AS fg_duration
+        FROM visits v
+        INNER JOIN urls u ON u.id = v.url
+        LEFT JOIN context_annotations ca ON ca.visit_id = v.id
+        WHERE u.url LIKE 'http%'
+        ORDER BY v.visit_time DESC
+        LIMIT #{MAX_VISITS}
+      SQL
+    else
+      <<~SQL
+        SELECT u.url, u.title, u.typed_count,
+               v.visit_time, v.visit_duration, v.transition, v.id, 0
+        FROM visits v
+        INNER JOIN urls u ON u.id = v.url
+        WHERE u.url LIKE 'http%'
+        ORDER BY v.visit_time DESC
+        LIMIT #{MAX_VISITS}
+      SQL
+    end
+
+    db.execute(sql).filter_map { |row| parse_row(row) }
   ensure
     db&.close
   end
@@ -137,14 +151,23 @@ class ChromeHistoryReader
   def self.parse_row(row)
     url = row[0]
     return nil unless url.is_a?(String) && url.start_with?("http")
+
+    # Prefer total_foreground_duration (actual foreground time) over visit_duration
+    fg  = [row[7].to_i, 0].max  # context_annotations can have -1 sentinel
+    dur = [row[4].to_i, 0].max
+    effective_duration = fg > 0 ? fg : dur
+
     {
-      url: url,
-      title: row[1].to_s,
-      typed_count: row[2].to_i,
-      visited_at: chrome_time(row[3]),
-      visit_duration: row[4].to_i,   # microseconds; 0 means unknown
-      transition: row[5].to_i & 0xFF, # strip qualifier bits, keep core type
-      visit_count: 1,
+      url:              url,
+      title:            row[1].to_s,
+      typed_count:      row[2].to_i,
+      visited_at:       chrome_time(row[3]),
+      visit_duration:   dur,
+      fg_duration:      fg,
+      effective_duration: effective_duration,  # best available time measurement
+      transition:       row[5].to_i & 0xFF,
+      visit_id:         row[6].to_i,
+      visit_count:      1,
     }
   end
 
