@@ -53,6 +53,24 @@ curl http://localhost:3000/api/v1/analyses/<id>
 
 In production the job runs on Solid Queue inside Puma (`SOLID_QUEUE_IN_PUMA=true`, already set in `config/deploy.yml`), or run `bin/jobs` as a separate worker on the same machine. `CleanupOldAnalysesJob` runs daily (`config/recurring.yml`) and removes analyses older than 7 days.
 
+### AI categorisation for "Other" domains
+
+After the rule-based `UrlCategorizer`, the background job sends the most-visited domains that are still "Other" to an LLM (Google Gemini, free tier) in **one batched call**, and maps them onto the existing categories only.
+
+- **Cost-aware:** top 50 domains per report, and every answer is cached in `domain_categories`, so a domain is never sent twice. Rows with `source: "manual"` let you fix a category by hand.
+- **Private:** only bare domain names are sent, never URLs, page titles or searches.
+- **Fail-safe:** no API key, a timeout, an error or an invalid answer just leaves those domains as "Other". Responses are validated, and unknown categories become "Other".
+- The report's `meta.ai_classified_domains` says how many domains the AI categorised.
+
+| Env var | Default | Purpose |
+| --- | --- | --- |
+| `GEMINI_API_KEY` | none | Turns the feature on ([free key](https://aistudio.google.com/apikey)) |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Model to use |
+| `AI_CATEGORISATION` | `on` | Set to `off` to disable |
+| `AI_CATEGORISATION_MAX_DOMAINS` | `50` | Domains per report sent to the LLM |
+
+Tests use a stubbed classifier, so CI never calls the API.
+
 ### Shareable reports
 
 | Method | Path | Notes |
@@ -134,7 +152,7 @@ The suite covers the parser (Takeout, JSON and CSV formats), the URL categorizer
 
 ## Project status
 
-🚧 Actively in development. Next up: AI categorisation for uncategorised domains.
+🚧 Actively in development. Next up: a live demo deployment.
 
 ## Author
 

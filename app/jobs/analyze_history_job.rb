@@ -19,12 +19,14 @@ class AnalyzeHistoryJob < ApplicationJob
       return
     end
 
-    result = HistoryAnalyzer.new(entries).analyze
+    ai     = AiDomainCategorizer.new(entries).call
+    result = HistoryAnalyzer.new(entries, domain_overrides: ai.overrides).analyze
     result[:meta] = {
-      total_entries_parsed: entries.size,
-      source:               analysis.source,
-      processed_at:         Time.current.iso8601,
-      analysis_id:          analysis.id
+      total_entries_parsed:  entries.size,
+      source:                analysis.source,
+      processed_at:          Time.current.iso8601,
+      analysis_id:           analysis.id,
+      ai_classified_domains: ai.ai_classified
     }
 
     analysis.update!(status: :completed, result: result, entries_count: entries.size, error_message: nil)

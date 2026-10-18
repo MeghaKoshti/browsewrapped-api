@@ -180,6 +180,15 @@ class UrlCategorizer
     "Other"         => "#475569"
   }.freeze
 
+  # Normalised host ("www." stripped), or nil for unparseable URLs.
+  def self.domain_for(url)
+    return nil if url.blank?
+
+    URI.parse(url).host&.downcase&.delete_prefix("www.")
+  rescue URI::InvalidURIError
+    nil
+  end
+
   def categorize(url)
     return "Other" if url.blank?
     uri = URI.parse(url)

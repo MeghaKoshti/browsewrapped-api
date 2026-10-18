@@ -20,6 +20,17 @@ class AnalyzeHistoryJobTest < ActiveJob::TestCase
     assert_not AnalysisUpload.exist?(analysis.id)
   end
 
+  test "reports how many domains were classified by AI" do
+    DomainCategory.create!(domain: "tailwindcss.com", category: "Design", source: "ai", confidence: 0.9)
+    analysis = build_analysis(File.read(Rails.root.join("sample/sample_history.json")))
+
+    AnalyzeHistoryJob.perform_now(analysis.id)
+
+    result = analysis.reload.result
+    assert_equal 1, result.dig("meta", "ai_classified_domains")
+    assert_equal "Design", result["top_domains"].find { |d| d["domain"] == "tailwindcss.com" }&.dig("topic")
+  end
+
   test "marks the analysis failed with a readable message for an unsupported file" do
     analysis = build_analysis("just some text")
 
