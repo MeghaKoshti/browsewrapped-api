@@ -7,7 +7,7 @@ class HistoryParser
   end
 
   def initialize(content)
-    @content = content.force_encoding("UTF-8").encode("UTF-8", invalid: :replace, undef: :replace, replace: "")
+    @content = content.dup.force_encoding("UTF-8").encode("UTF-8", invalid: :replace, undef: :replace, replace: "")
   end
 
   def parse
