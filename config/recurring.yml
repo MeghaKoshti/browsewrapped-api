@@ -16,3 +16,6 @@ production:
   cleanup_old_analyses:
     class: CleanupOldAnalysesJob
     schedule: every day at 3am
+  cleanup_expired_shared_reports:
+    class: CleanupExpiredSharedReportsJob
+    schedule: every day at 3:30am

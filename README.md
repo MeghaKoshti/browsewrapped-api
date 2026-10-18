@@ -53,6 +53,21 @@ curl http://localhost:3000/api/v1/analyses/<id>
 
 In production the job runs on Solid Queue inside Puma (`SOLID_QUEUE_IN_PUMA=true`, already set in `config/deploy.yml`), or run `bin/jobs` as a separate worker on the same machine. `CleanupOldAnalysesJob` runs daily (`config/recurring.yml`) and removes analyses older than 7 days.
 
+### Shareable reports
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| `POST` | `/api/v1/shared_reports` | Body `{ analysis_id }` or `{ report }`. Returns **201** with `token`, `path` (`/r/:token`), `expires_at` and a one-time `delete_token` |
+| `GET` | `/api/v1/shared_reports/:token` | The read-only report; **404** when unknown or expired |
+| `DELETE` | `/api/v1/shared_reports/:token` | Needs the `X-Delete-Token` header; **204**, or **403** for a wrong token |
+
+Privacy by design:
+
+- `ReportSanitizer` keeps an **allowlist** of aggregated sections (persona, topics, charts, patterns). Page URLs and titles, search queries and domain names are never stored.
+- Tokens come from `has_secure_token` (24 random characters), never the sequential id.
+- The delete token is shown once; only its SHA-256 digest is saved.
+- Links expire after 30 days and `CleanupExpiredSharedReportsJob` removes them daily.
+
 ### `POST /api/v1/analyze`
 
 The original synchronous endpoint, kept for backward compatibility. Upload a history file as multipart form data (`file`, max 100 MB) and get the report back in the same request.
@@ -119,7 +134,7 @@ The suite covers the parser (Takeout, JSON and CSV formats), the URL categorizer
 
 ## Project status
 
-🚧 Actively in development. Next up: shareable reports.
+🚧 Actively in development. Next up: AI categorisation for uncategorised domains.
 
 ## Author
 
