@@ -58,7 +58,7 @@ class HistoryParserTest < ActiveSupport::TestCase
   end
 
   test "raises a helpful error for unsupported content" do
-    error = assert_raises(RuntimeError) { HistoryParser.parse("just some text") }
+    error = assert_raises(HistoryParser::UnsupportedFormatError) { HistoryParser.parse("just some text") }
 
     assert_match(/Unsupported format/, error.message)
   end

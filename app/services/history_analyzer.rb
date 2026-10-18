@@ -54,10 +54,13 @@ class HistoryAnalyzer
       color: "#8b5cf6" }
   ].freeze
 
-  def initialize(entries, chrome_searches: [])
+  # domain_overrides: { "example.dev" => "Programming" } for domains the rules
+  # left as "Other" (see AiDomainCategorizer). Rule-based matches always win.
+  def initialize(entries, chrome_searches: [], domain_overrides: {})
     @entries = entries
     @chrome_searches = chrome_searches
     @categorizer = UrlCategorizer.new
+    @domain_overrides = domain_overrides
   end
 
   def analyze
@@ -88,7 +91,14 @@ class HistoryAnalyzer
   private
 
   def categorized
-    @categorized ||= @entries.map { |e| e.merge(topic: @categorizer.categorize(e[:url])) }
+    @categorized ||= @entries.map { |e| e.merge(topic: topic_for(e[:url])) }
+  end
+
+  def topic_for(url)
+    topic = @categorizer.categorize(url)
+    return topic unless topic == "Other" && @domain_overrides.any?
+
+    @domain_overrides[UrlCategorizer.domain_for(url)] || topic
   end
 
   def timed
@@ -432,7 +442,7 @@ class HistoryAnalyzer
     counts.delete("unknown")
 
     counts.sort_by { |_, v| -v }.first(20).map do |domain, visits|
-      topic = @categorizer.categorize("https://#{domain}")
+      topic = topic_for("https://#{domain}")
       { domain: domain, visits: visits, topic: topic, color: UrlCategorizer::CATEGORY_COLORS[topic] || "#475569" }
     end
   end
@@ -451,7 +461,7 @@ class HistoryAnalyzer
     end
 
     url_data.sort_by { |_, d| -d[:count] }.first(15).map do |url, d|
-      topic  = @categorizer.categorize(url)
+      topic  = topic_for(url)
       domain = extract_domain(url)
       title  = (d[:title].presence || domain)[0..80]
       dur_min = d[:duration] > 0 ? [ [ d[:duration] / 60_000_000.0, MAX_PAGE_DURATION_US / 60_000_000.0 ].min.round(1), nil ].compact.first : nil

@@ -2,6 +2,9 @@ require "csv"
 require "cgi"
 
 class HistoryParser
+  # Raised when the file is not a format we understand. The message is safe to show users.
+  class UnsupportedFormatError < StandardError; end
+
   def self.parse(content)
     new(content).parse
   end
@@ -11,7 +14,7 @@ class HistoryParser
   end
 
   def parse
-    try_json || try_csv || raise("Unsupported format. Please upload a Chrome Takeout JSON, extension export JSON, or CSV file.")
+    try_json || try_csv || raise(UnsupportedFormatError, "Unsupported format. Please upload a Chrome Takeout JSON, extension export JSON, or CSV file.")
   end
 
   private

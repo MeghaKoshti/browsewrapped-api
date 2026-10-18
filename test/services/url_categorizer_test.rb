@@ -22,6 +22,16 @@ class UrlCategorizerTest < ActiveSupport::TestCase
     assert_equal "Shopping", @categorizer.categorize("https://example.org/cart/checkout")
   end
 
+  test "does not treat .html pages as AI & ML" do
+    assert_equal "Programming", @categorizer.categorize("https://guides.rubyonrails.org/active_record_querying.html")
+    assert_equal "Other", @categorizer.categorize("https://example.org/about.html")
+  end
+
+  test "still matches ml as a separate word" do
+    assert_equal "AI & ML", @categorizer.categorize("https://example.org/ml/intro")
+    assert_equal "AI & ML", @categorizer.categorize("https://ml.example.org/")
+  end
+
   test "returns Other for blank, invalid or unrecognised URLs" do
     assert_equal "Other", @categorizer.categorize("")
     assert_equal "Other", @categorizer.categorize(nil)
