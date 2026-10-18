@@ -1,5 +1,7 @@
 # BrowseWrapped API
 
+[![CI](https://github.com/MeghaKoshti/browsewrapped-api/actions/workflows/ci.yml/badge.svg)](https://github.com/MeghaKoshti/browsewrapped-api/actions/workflows/ci.yml)
+
 **The Rails API behind BrowseWrapped.** It takes a browser-history export, classifies every URL into topics, and returns a "Wrapped"-style analytics report as JSON: persona, trends, heatmaps, sessions, streaks and a topic knowledge graph.
 
 Frontend: [browsewrapped-web](https://github.com/MeghaKoshti/browsewrapped-web)
@@ -56,6 +58,7 @@ Reads the local Chrome/Chromium history database directly (Linux and macOS), for
 - PostgreSQL
 - SQLite3 (to read Chrome's local history file)
 - Rack CORS (allows the Vite dev server on `localhost:5173`)
+- Minitest, RuboCop and Brakeman, run on every push with GitHub Actions
 
 ## Getting started
 
@@ -78,9 +81,17 @@ Then start [browsewrapped-web](https://github.com/MeghaKoshti/browsewrapped-web)
 
 `sample/sample_history.json` is a **synthetic** file (about 1,250 visits over 60 days of developer-style browsing), so you can try the app without exporting your own history.
 
+### Running tests
+
+```bash
+bin/rails test
+```
+
+The suite covers the parser (Takeout, JSON and CSV formats), the URL categorizer, the analyzer's report sections and the `/api/v1/analyze` endpoint.
+
 ## Project status
 
-🚧 Actively in development. Next up: automated tests (RSpec), background processing for very large files, and shareable reports.
+🚧 Actively in development. Next up: background processing for very large files, and shareable reports.
 
 ## Author
 
