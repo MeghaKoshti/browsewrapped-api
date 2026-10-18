@@ -28,4 +28,34 @@ class AnalysesTest < ActionDispatch::IntegrationTest
     assert_response :unprocessable_entity
     assert_match(/Unsupported format/, response.parsed_body["error"])
   end
+
+  test "GET /api/v1/sample returns the sample report" do
+    get "/api/v1/sample"
+
+    assert_response :success
+    body = response.parsed_body
+    assert_equal "sample", body.dig("meta", "source")
+    assert_operator body.dig("meta", "total_entries_parsed"), :>, 0
+    %w[summary persona topics top_domains daily_pattern knowledge_graph].each do |key|
+      assert body.key?(key), "expected #{key} in the sample report"
+    end
+  end
+
+  test "GET /api/v1/sample is served from the cache on repeat calls" do
+    original_cache = Rails.cache
+    Rails.cache = ActiveSupport::Cache::MemoryStore.new
+
+    get "/api/v1/sample"
+    first = response.parsed_body
+    assert Rails.cache.exist?(Api::V1::AnalysesController::SAMPLE_CACHE_KEY)
+
+    travel 1.minute do
+      get "/api/v1/sample"
+    end
+
+    assert_response :success
+    assert_equal first.dig("meta", "processed_at"), response.parsed_body.dig("meta", "processed_at")
+  ensure
+    Rails.cache = original_cache
+  end
 end

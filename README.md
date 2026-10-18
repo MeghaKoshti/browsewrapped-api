@@ -44,6 +44,10 @@ Supported formats:
 curl -F file=@sample/sample_history.json http://localhost:3000/api/v1/analyze
 ```
 
+### `GET /api/v1/sample`
+
+Returns the report for the bundled synthetic file (`sample/sample_history.json`), in the same shape as `/analyze` with `meta.source = "sample"`. The result is cached for a day, so repeat calls are instant. The web app's **Try with sample data** button uses this.
+
 ### `GET /api/v1/chrome`
 
 Reads the local Chrome/Chromium history database directly (Linux and macOS), for when the API runs on your own machine.
