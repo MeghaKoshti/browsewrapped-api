@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_18_110000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_18_120000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -25,6 +25,16 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_18_110000) do
     t.datetime "updated_at", null: false
     t.index ["created_at"], name: "index_analyses_on_created_at"
     t.index ["status"], name: "index_analyses_on_status"
+  end
+
+  create_table "domain_categories", force: :cascade do |t|
+    t.string "domain", null: false
+    t.string "category", null: false
+    t.string "source", default: "ai", null: false
+    t.float "confidence"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["domain"], name: "index_domain_categories_on_domain", unique: true
   end
 
   create_table "shared_reports", force: :cascade do |t|
