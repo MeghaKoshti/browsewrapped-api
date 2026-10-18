@@ -5,6 +5,7 @@ Rails.application.routes.draw do
     namespace :v1 do
       post "analyze", to: "analyses#create"
       get  "chrome",  to: "analyses#chrome"
+      get  "sample",  to: "analyses#sample"
     end
   end
 end
