@@ -28,6 +28,33 @@ Upload (JSON / CSV)  or  local Chrome history (SQLite)
 
 Small files are processed **in memory during the request**. Large files are analysed in the background by a Solid Queue job (see below): the raw upload is kept on disk only until the job has read it, and the finished report is deleted after 7 days.
 
+## Architecture & decisions
+
+```mermaid
+flowchart LR
+    U[Browser] --> W["React app<br/>(Vercel)"]
+    W -- "upload / poll / share" --> A["Rails 8.1 API"]
+    A -- "small files: inline" --> P[(PostgreSQL)]
+    A -- "large files: enqueue" --> Q["Solid Queue<br/>AnalyzeHistoryJob"]
+    Q -- "parse → categorise → analyse" --> P
+    Q -. "unknown domains only" .-> L["LLM (Gemini)"]
+```
+
+**Key decisions**
+
+- **Store aggregates, not history.** Uploads are parsed in memory; the raw file lives only until the job reads it, and reports are deleted after 7 days.
+- **Async for big files, sync for small ones.** Solid Queue keeps 100 MB uploads from timing out, while demo-sized files skip the queue for a faster first impression.
+- **JSONB for reports.** The report shape changes often; JSONB stores it without migrations and is still queryable.
+- **Rules first, LLM second, cached per domain.** The LLM sees only domain names the rules couldn't place, in one batched call, and never the same domain twice.
+- **Allowlist, not blocklist, for sharing.** New report sections stay private until they are explicitly added to `ReportSanitizer`.
+- **Fail-safe AI.** No key, a timeout or a bad answer leaves a domain as "Other" instead of failing the analysis.
+
+**What I'd do next**
+
+- Stream-parse very large Takeout files instead of reading them into memory in the job.
+- Move uploads to object storage (Active Storage + S3) so web and worker can run on separate machines.
+- Add an admin view to review and correct AI categories (`source: "manual"`).
+
 ## API
 
 ### `POST /api/v1/analyses` (recommended)
