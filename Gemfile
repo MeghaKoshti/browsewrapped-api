@@ -45,10 +45,3 @@ group :development, :test do
   # Omakase Ruby styling [https://github.com/rails/rubocop-rails-omakase/]
   gem "rubocop-rails-omakase", require: false
 end
-
-gem "sidekiq"
-gem "redis"
-gem "oj"
-gem "pagy"
-gem "groupdate"
-gem "ahoy_matey"
