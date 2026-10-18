@@ -7,6 +7,8 @@ class UrlCategorizer
     "github.com" => "Programming", "stackoverflow.com" => "Programming",
     "gitlab.com" => "Programming", "npmjs.com" => "Programming",
     "pypi.org" => "Programming", "rubygems.org" => "Programming",
+    "rubyonrails.org" => "Programming", "ruby-doc.org" => "Programming",
+    "ruby-lang.org" => "Programming",
     "docker.com" => "Programming", "hub.docker.com" => "Programming",
     "kubernetes.io" => "Programming", "developer.mozilla.org" => "Programming",
     "devdocs.io" => "Programming", "w3schools.com" => "Programming",
@@ -207,7 +209,7 @@ class UrlCategorizer
   def keyword_fallback(host, path)
     text = "#{host} #{path}".downcase
     return "Programming"    if text.match?(/code|dev|git|api|sdk|npm|gem|package|stack|overflow|program|debug/)
-    return "AI & ML"        if text.match?(/\bai\b|ml\b|machine.learn|neural|gpt|llm|chatbot|diffus/)
+    return "AI & ML"        if text.match?(/\bai\b|\bml\b|machine.learn|neural|gpt|llm|chatbot|diffus/)
     return "Education"      if text.match?(/learn|course|tutorial|edu\b|academy|school|university|college|mooc/)
     return "Entertainment"  if text.match?(/video|stream|watch|movie|music|podcast|episode/)
     return "News"           if text.match?(/news|blog|press|article|media|journal|magazine/)
