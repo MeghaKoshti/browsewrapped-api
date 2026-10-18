@@ -8,12 +8,12 @@ class HistoryAnalyzer
     /bing\.com\/search/ => "q",
     /duckduckgo\.com/ => "q",
     /search\.yahoo\.com/ => "p",
-    /startpage\.com/ => "query",
+    /startpage\.com/ => "query"
   }.freeze
 
   SEARCH_URL_PATTERNS = [
     /google\.com\/search/, /bing\.com\/search/, /duckduckgo\.com\/\?/,
-    /youtube\.com\/results/, /google\.com\/\?q=/, /google\.com\/#q=/,
+    /youtube\.com\/results/, /google\.com\/\?q=/, /google\.com\/#q=/
   ].freeze
 
   SESSION_GAP_SECS     = 30 * 60
@@ -51,7 +51,7 @@ class HistoryAnalyzer
     { id: "polymath",   title: "The Digital Polymath",
       test: ->(_, _) { true },  # default
       description: "No single obsession. You browse widely, connect dots others miss, and keep everyone guessing.",
-      color: "#8b5cf6" },
+      color: "#8b5cf6" }
   ].freeze
 
   def initialize(entries, chrome_searches: [])
@@ -81,7 +81,7 @@ class HistoryAnalyzer
       top_searches:     build_top_searches,
       chrome_searches:  build_chrome_searches,
       intent:           build_intent_analysis,
-      knowledge_graph:  build_knowledge_graph,
+      knowledge_graph:  build_knowledge_graph
     }
   end
 
@@ -115,9 +115,9 @@ class HistoryAnalyzer
     end
 
     sorted = timed.sort_by { |e| e[:visited_at] }
-    sessions = [[sorted.first]]
+    sessions = [ [ sorted.first ] ]
     sorted.each_cons(2) do |a, b|
-      (b[:visited_at] - a[:visited_at]).abs > SESSION_GAP_SECS ? (sessions << [b]) : (sessions.last << b)
+      (b[:visited_at] - a[:visited_at]).abs > SESSION_GAP_SECS ? (sessions << [ b ]) : (sessions.last << b)
     end
 
     durations_min = sessions.map do |s|
@@ -126,7 +126,7 @@ class HistoryAnalyzer
         dur > 0.1 ? dur : 0.0
       else
         span = (s.last[:visited_at] - s.first[:visited_at]).to_f / 60
-        last_dur = [s.last[:effective_duration].to_i / 60_000_000.0, 30.0].min
+        last_dur = [ s.last[:effective_duration].to_i / 60_000_000.0, 30.0 ].min
         span + last_dur
       end
     end.select { |d| d > 0 }
@@ -137,7 +137,7 @@ class HistoryAnalyzer
       total_sessions:          sessions.size,
       avg_duration_minutes:    durations_min.any? ? (total_min / durations_min.size).round(1) : 0,
       longest_session_minutes: durations_min.max&.round(1) || 0,
-      total_hours_browsed:     (total_min / 60.0).round(1),
+      total_hours_browsed:     (total_min / 60.0).round(1)
     }
   end
 
@@ -160,23 +160,23 @@ class HistoryAnalyzer
 
   def build_persona
     # Compute percentages relative to meaningful visits (excluding Other + Search)
-    relevant = build_topics.reject { |t| ["Other", "Search"].include?(t[:name]) }
+    relevant = build_topics.reject { |t| [ "Other", "Search" ].include?(t[:name]) }
     rel_total = relevant.sum { |t| t[:visits] }.to_f
     pct = rel_total > 0 ?
-            relevant.map { |t| [t[:name], (t[:visits] / rel_total * 100).round(1)] }.to_h :
-            build_topics.map { |t| [t[:name], t[:percentage]] }.to_h
+            relevant.map { |t| [ t[:name], (t[:visits] / rel_total * 100).round(1) ] }.to_h :
+            build_topics.map { |t| [ t[:name], t[:percentage] ] }.to_h
 
     # Also consider time-based data if available
     time_pct = {}
     if has_duration_data?
-      time_rel = build_time_by_topic.reject { |t| ["Other", "Search"].include?(t[:name]) }
+      time_rel = build_time_by_topic.reject { |t| [ "Other", "Search" ].include?(t[:name]) }
       time_total = time_rel.sum { |t| t[:hours] }.to_f
       time_pct = time_total > 0 ?
-                   time_rel.map { |t| [t[:name], (t[:hours] / time_total * 100).round(1)] }.to_h : {}
+                   time_rel.map { |t| [ t[:name], (t[:hours] / time_total * 100).round(1) ] }.to_h : {}
     end
 
     # Effective percentage: max of visit-based and time-based
-    eff = ->(k) { [pct[k].to_f, time_pct[k].to_f].max }
+    eff = ->(k) { [ pct[k].to_f, time_pct[k].to_f ].max }
 
     sd = sessions_data
 
@@ -186,19 +186,19 @@ class HistoryAnalyzer
     if persona[:id] == "polymath"
       persona = if eff.("Programming") + eff.("Cloud & DevOps") >= 25
         PERSONAS.find { |p| p[:id] == "builder" }
-      elsif eff.("AI & ML") >= 15
+                elsif eff.("AI & ML") >= 15
         PERSONAS.find { |p| p[:id] == "ai_pioneer" }
-      elsif eff.("Education") + eff.("Science") + eff.("Reference") >= 20
+                elsif eff.("Education") + eff.("Science") + eff.("Reference") >= 20
         PERSONAS.find { |p| p[:id] == "researcher" }
-      elsif eff.("News") + eff.("Tech News") >= 22
+                elsif eff.("News") + eff.("Tech News") >= 22
         PERSONAS.find { |p| p[:id] == "info_broker" }
-      elsif eff.("Social Media") >= 22
+                elsif eff.("Social Media") >= 22
         PERSONAS.find { |p| p[:id] == "connector" }
-      elsif eff.("Design") >= 12
+                elsif eff.("Design") >= 12
         PERSONAS.find { |p| p[:id] == "creative" }
-      elsif eff.("Entertainment") >= 20
+                elsif eff.("Entertainment") >= 20
         PERSONAS.find { |p| p[:id] == "streamer" }
-      else
+                else
         PERSONAS.last
       end || PERSONAS.last
     end
@@ -244,7 +244,7 @@ class HistoryAnalyzer
     peak = build_daily_pattern.max_by { |h| h[:visits] }
     peak_hour = peak&.dig(:visits).to_i > 0 ? fmt_hour(peak[:hour]) : nil
 
-    weekend_visits = timed.count { |e| [0, 6].include?(e[:visited_at].wday) }
+    weekend_visits = timed.count { |e| [ 0, 6 ].include?(e[:visited_at].wday) }
     weekend_pct = timed.size > 0 ? ((weekend_visits / timed.size.to_f) * 100).round(1) : 0
 
     {
@@ -259,7 +259,7 @@ class HistoryAnalyzer
       total_hours_browsed: sd[:total_hours_browsed],
       avg_daily_minutes:   avg_daily,
       peak_hour:           peak_hour,
-      weekend_pct:         weekend_pct,
+      weekend_pct:         weekend_pct
     }
   end
 
@@ -274,7 +274,7 @@ class HistoryAnalyzer
     categorized.each do |e|
       dur = e[:effective_duration].to_i
       next unless dur > 0
-      capped = [dur, MAX_PAGE_DURATION_US].min
+      capped = [ dur, MAX_PAGE_DURATION_US ].min
       topic_usec[e[:topic]]   += capped
       topic_visits[e[:topic]] += 1
     end
@@ -354,7 +354,7 @@ class HistoryAnalyzer
     return { days: [], max: 0 } if daily.empty?
 
     end_date   = Date.today
-    start_date = [daily.keys.min, end_date - 364].max
+    start_date = [ daily.keys.min, end_date - 364 ].max
     start_date -= start_date.wday  # align to Sunday
 
     days = (start_date..end_date).map { |d| { date: d.iso8601, visits: daily[d] || 0 } }
@@ -371,7 +371,7 @@ class HistoryAnalyzer
 
     longest = 1; run = 1
     dates.each_cons(2) do |a, b|
-      (b - a).to_i == 1 ? (run += 1; longest = [longest, run].max) : (run = 1)
+      (b - a).to_i == 1 ? (run += 1; longest = [ longest, run ].max) : (run = 1)
     end
 
     today    = Date.today
@@ -386,7 +386,7 @@ class HistoryAnalyzer
       current:          current,
       longest:          longest,
       total_active_days: dates.size,
-      last_active:      dates.last.iso8601,
+      last_active:      dates.last.iso8601
     }
   end
 
@@ -420,7 +420,7 @@ class HistoryAnalyzer
       rising:       momentum.select { |m| m[:delta] > 0 }.first(5),
       falling:      momentum.select { |m| m[:delta] < 0 }.first(5),
       first_label:  sorted[0][:visited_at].strftime("%b"),
-      second_label: sorted[-1][:visited_at].strftime("%b %Y"),
+      second_label: sorted[-1][:visited_at].strftime("%b %Y")
     }
   end
 
@@ -454,7 +454,7 @@ class HistoryAnalyzer
       topic  = @categorizer.categorize(url)
       domain = extract_domain(url)
       title  = (d[:title].presence || domain)[0..80]
-      dur_min = d[:duration] > 0 ? [[d[:duration] / 60_000_000.0, MAX_PAGE_DURATION_US / 60_000_000.0].min.round(1), nil].compact.first : nil
+      dur_min = d[:duration] > 0 ? [ [ d[:duration] / 60_000_000.0, MAX_PAGE_DURATION_US / 60_000_000.0 ].min.round(1), nil ].compact.first : nil
       { url: url, title: title, visits: d[:count], domain: domain, duration_min: dur_min,
         topic: topic, color: UrlCategorizer::CATEGORY_COLORS[topic] || "#475569" }
     end
@@ -518,7 +518,7 @@ class HistoryAnalyzer
       search_count: search_n,
       top_intentional: domain_typed.select { |_, v| v > 0 }
                                    .sort_by { |_, v| -v }.first(10)
-                                   .map { |d, c| { domain: d, typed_count: c } },
+                                   .map { |d, c| { domain: d, typed_count: c } }
     }
   end
 
@@ -544,7 +544,7 @@ class HistoryAnalyzer
     co = Hash.new(0)
     sorted.each_cons(8) do |group|
       topics = group.map { |e| e[:topic] }.select { |t| topic_names.include?(t) }.uniq
-      topics.combination(2) { |a, b| co[[a, b].sort.join("|")] += 1 }
+      topics.combination(2) { |a, b| co[[ a, b ].sort.join("|")] += 1 }
     end
     co.sort_by { |_, w| -w }.first(20).filter_map do |key, weight|
       a, b = key.split("|")
@@ -597,7 +597,7 @@ class HistoryAnalyzer
       top_searches:     [],
       chrome_searches:  [],
       intent:           { typed_pct: 0, search_pct: 0, link_pct: 0, other_pct: 0, top_intentional: [] },
-      knowledge_graph:  { nodes: [], edges: [] },
+      knowledge_graph:  { nodes: [], edges: [] }
     }
   end
 end

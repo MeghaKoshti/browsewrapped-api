@@ -4,14 +4,14 @@ require "tmpdir"
 require "securerandom"
 
 class ChromeHistoryReader
-  PROFILE_DIRS = ["Default", "Profile 1", "Profile 2", "Profile 3"].freeze
+  PROFILE_DIRS = [ "Default", "Profile 1", "Profile 2", "Profile 3" ].freeze
 
   SEARCH_ROOTS = [
     File.expand_path("~/.config/google-chrome"),
     File.expand_path("~/.config/chromium"),
     File.expand_path("~/.config/google-chrome-beta"),
     File.expand_path("~/Library/Application Support/Google/Chrome"),
-    File.expand_path("~/Library/Application Support/Chromium"),
+    File.expand_path("~/Library/Application Support/Chromium")
   ].freeze
 
   MAX_VISITS = 200_000
@@ -37,12 +37,12 @@ class ChromeHistoryReader
     raise "No history entries found in Chrome." if all_entries.empty?
 
     entries = all_entries
-      .uniq { |e| [e[:url], e[:visited_at]&.to_i] }
+      .uniq { |e| [ e[:url], e[:visited_at]&.to_i ] }
       .sort_by { |e| -(e[:visited_at]&.to_i || 0) }
       .first(MAX_VISITS)
 
     searches = all_searches
-      .uniq { |s| [s[:query], s[:visited_at]&.to_i] }
+      .uniq { |s| [ s[:query], s[:visited_at]&.to_i ] }
       .sort_by { |s| -(s[:visited_at]&.to_i || 0) }
 
     { entries: entries, searches: searches }
@@ -153,8 +153,8 @@ class ChromeHistoryReader
     return nil unless url.is_a?(String) && url.start_with?("http")
 
     # Prefer total_foreground_duration (actual foreground time) over visit_duration
-    fg  = [row[7].to_i, 0].max  # context_annotations can have -1 sentinel
-    dur = [row[4].to_i, 0].max
+    fg  = [ row[7].to_i, 0 ].max  # context_annotations can have -1 sentinel
+    dur = [ row[4].to_i, 0 ].max
     effective_duration = fg > 0 ? fg : dur
 
     {
@@ -167,7 +167,7 @@ class ChromeHistoryReader
       effective_duration: effective_duration,  # best available time measurement
       transition:       row[5].to_i & 0xFF,
       visit_id:         row[6].to_i,
-      visit_count:      1,
+      visit_count:      1
     }
   end
 

@@ -154,7 +154,7 @@ class UrlCategorizer
     # Search (special — extract queries separately)
     "google.com" => "Search", "bing.com" => "Search",
     "duckduckgo.com" => "Search", "search.yahoo.com" => "Search",
-    "startpage.com" => "Search", "brave.com" => "Search",
+    "startpage.com" => "Search", "brave.com" => "Search"
   }.freeze
 
   CATEGORY_COLORS = {
@@ -177,7 +177,7 @@ class UrlCategorizer
     "Travel"        => "#22c55e",
     "Health"        => "#4ade80",
     "Search"        => "#94a3b8",
-    "Other"         => "#475569",
+    "Other"         => "#475569"
   }.freeze
 
   def categorize(url)
