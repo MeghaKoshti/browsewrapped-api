@@ -28,14 +28,14 @@ module HistoryDatabases
 
   # Firefox places.sqlite: visit_date in microseconds since 1970. Firefox keeps
   # it in WAL mode, so the fixture does too.
-  def firefox_history_db(name = "places.sqlite")
+  def firefox_history_db(name = "places.sqlite", visits: VISITS)
     build_db(name) do |db|
       db.execute("PRAGMA journal_mode = WAL")
       db.execute_batch(<<~SQL)
         CREATE TABLE moz_places (id INTEGER PRIMARY KEY, url LONGVARCHAR, title LONGVARCHAR, visit_count INTEGER DEFAULT 0);
         CREATE TABLE moz_historyvisits (id INTEGER PRIMARY KEY, from_visit INTEGER, place_id INTEGER, visit_date INTEGER, visit_type INTEGER);
       SQL
-      each_place do |id, url, title, times|
+      each_place(visits) do |id, url, title, times|
         db.execute("INSERT INTO moz_places (id, url, title, visit_count) VALUES (?, ?, ?, ?)", [ id, url, title, times.size ])
         times.each do |time|
           db.execute("INSERT INTO moz_historyvisits (place_id, visit_date, visit_type) VALUES (?, ?, 1)", [ id, (time.to_r * 1_000_000).to_i ])
@@ -45,13 +45,13 @@ module HistoryDatabases
   end
 
   # Safari History.db: visit_time in seconds since 2001-01-01; titles live on visits.
-  def safari_history_db(name = "History.db")
+  def safari_history_db(name = "History.db", visits: VISITS)
     build_db(name) do |db|
       db.execute_batch(<<~SQL)
         CREATE TABLE history_items (id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT NOT NULL UNIQUE, visit_count INTEGER NOT NULL);
         CREATE TABLE history_visits (id INTEGER PRIMARY KEY AUTOINCREMENT, history_item INTEGER NOT NULL, visit_time REAL NOT NULL, title TEXT NULL, load_successful BOOLEAN NOT NULL DEFAULT 1);
       SQL
-      each_place do |id, url, title, times|
+      each_place(visits) do |id, url, title, times|
         db.execute("INSERT INTO history_items (id, url, visit_count) VALUES (?, ?, ?)", [ id, url, times.size ])
         times.each do |time|
           db.execute("INSERT INTO history_visits (history_item, visit_time, title) VALUES (?, ?, ?)", [ id, (time.to_r - 978_307_200).to_f, title ])
@@ -61,19 +61,25 @@ module HistoryDatabases
   end
 
   # Chrome History: visit_time in microseconds since 1601-01-01.
-  def chrome_history_db(name = "History")
+  def chrome_history_db(name = "History", visits: VISITS)
     build_db(name) do |db|
       db.execute_batch(<<~SQL)
         CREATE TABLE urls (id INTEGER PRIMARY KEY, url LONGVARCHAR, title LONGVARCHAR, visit_count INTEGER DEFAULT 0 NOT NULL, typed_count INTEGER DEFAULT 0 NOT NULL, last_visit_time INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE visits (id INTEGER PRIMARY KEY, url INTEGER NOT NULL, visit_time INTEGER NOT NULL, from_visit INTEGER, transition INTEGER DEFAULT 0 NOT NULL, visit_duration INTEGER DEFAULT 0 NOT NULL);
       SQL
-      each_place do |id, url, title, times|
+      each_place(visits) do |id, url, title, times|
         db.execute("INSERT INTO urls (id, url, title, visit_count) VALUES (?, ?, ?, ?)", [ id, url, title, times.size ])
         times.each do |time|
           db.execute("INSERT INTO visits (url, visit_time) VALUES (?, ?)", [ id, ((time.to_r + CHROME_EPOCH_OFFSET) * 1_000_000).to_i ])
         end
       end
     end
+  end
+
+  # A few thousand visits over two months, closer to a real profile than VISITS.
+  def many_visits(count = 3_000)
+    start = Time.utc(2026, 8, 1)
+    Array.new(count) { |i| [ "https://site#{i % 40}.example/page/#{i % 300}", "Page #{i}", start + (i * 1_800) ] }
   end
 
   # A valid SQLite database that is not browser history.
@@ -98,14 +104,15 @@ module HistoryDatabases
     path = File.join(history_db_dir, name)
     FileUtils.rm_f(path) # always build from scratch
     db = SQLite3::Database.new(path)
+    db.execute("PRAGMA synchronous = OFF") # throwaway fixtures: no fsync per insert
     yield db
     path
   ensure
     db&.close
   end
 
-  def each_place
-    VISITS.group_by(&:first).each_with_index do |(url, visits), index|
+  def each_place(visits)
+    visits.group_by(&:first).each_with_index do |(url, visits), index|
       yield index + 1, url, visits.first[1], visits.map(&:last)
     end
   end

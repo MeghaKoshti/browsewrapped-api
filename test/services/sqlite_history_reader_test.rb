@@ -38,6 +38,19 @@ class SqliteHistoryReaderTest < ActiveSupport::TestCase
     assert_equal "2026-06-01T09:30:15Z", entries.last[:visited_at].iso8601
   end
 
+  # sqlite3 2.9 interrupted any query longer than ~1000 VM steps when
+  # statement_timeout was set, so only tiny fixtures could be read.
+  test "reads a realistically sized history from every browser within the time limit" do
+    visits = many_visits
+
+    %i[firefox safari chrome].each do |browser|
+      entries = SqliteHistoryReader.read(send("#{browser}_history_db", "#{browser}-big", visits: visits))
+
+      assert_equal 3_000, entries.size, browser
+      assert_equal visits.last.last, entries.first[:visited_at], browser
+    end
+  end
+
   test "an unknown SQLite database is detected as nil and refused when read" do
     path = unknown_sqlite_db
 
