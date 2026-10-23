@@ -1,0 +1,52 @@
+# Fly.io config for the BrowseWrapped API. See "Deploy" in the README.
+# Replace the app name with your own (it becomes <app>.fly.dev).
+app = "browsewrapped-api-CHANGE-ME"
+primary_region = "bom" # Mumbai
+
+[build]
+  # Uses the Dockerfile in this repo (Puma behind Thruster).
+
+[deploy]
+  # Runs once per deploy in a temporary machine, before the new version starts.
+  # Creates the primary, cache, queue and cable databases on the first deploy.
+  release_command = "./bin/rails db:prepare"
+
+[env]
+  RAILS_ENV = "production"
+  # Thruster listens here and proxies to Puma on 3000. 8080 instead of the
+  # Dockerfile's 80 because the app runs as a non-root user.
+  HTTP_PORT = "8080"
+  # Background analyses and the daily cleanup jobs run inside Puma, on the same
+  # machine that received the upload, so the local upload dir below works.
+  SOLID_QUEUE_IN_PUMA = "true"
+  ANALYSIS_UPLOAD_DIR = "/rails/tmp/analysis_uploads"
+  RAILS_LOG_LEVEL = "info"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  # Keep one machine running: it is also the job worker, and the daily cleanup
+  # (analyses after 7 days, expired share links) only runs while it is up.
+  # 0 is fine for a demo if you accept cold starts and late cleanups.
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 20
+    hard_limit = 25
+
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval = "30s"
+    method = "GET"
+    path = "/up"
+    timeout = "5s"
+
+[[vm]]
+  # Uploads up to 100 MB are parsed in memory, so 512 MB is too tight.
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1

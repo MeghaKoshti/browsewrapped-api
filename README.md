@@ -80,7 +80,7 @@ curl http://localhost:3000/api/v1/analyses/<id>
 | `ANALYSIS_UPLOAD_DIR` | `tmp/analysis_uploads` | Where uploads wait for the job (must be shared by web and worker) |
 | `ANALYSIS_MAX_UPLOAD_BYTES` | `104857600` (100 MB) | Larger uploads get **413** |
 
-In production the job runs on Solid Queue inside Puma (`SOLID_QUEUE_IN_PUMA=true`, already set in `config/deploy.yml`), or run `bin/jobs` as a separate worker on the same machine. `CleanupOldAnalysesJob` runs daily (`config/recurring.yml`) and removes analyses older than 7 days.
+In production the job runs on Solid Queue inside Puma (`SOLID_QUEUE_IN_PUMA=true`, set in `fly.toml`), or run `bin/jobs` as a separate worker on the same machine. `CleanupOldAnalysesJob` runs daily (`config/recurring.yml`) and removes analyses older than 7 days.
 
 ### AI categorisation for "Other" domains
 
@@ -233,7 +233,8 @@ Compares your most recent stretch of browsing with the one just before it: "Last
 - PostgreSQL
 - SQLite3 (to read uploaded Firefox, Safari and Chrome history databases, and the local Chrome history)
 - Solid Queue (background analysis of large files)
-- Rack CORS (allows the Vite dev server on `localhost:5173`)
+- Rack CORS (origins from `CORS_ORIGINS`, plus the Vite dev server on `localhost:5173` in development)
+- Fly.io (Docker image with Thruster in front of Puma)
 - Minitest, RuboCop and Brakeman, run on every push with GitHub Actions
 
 ## Getting started
@@ -265,9 +266,69 @@ bin/rails test
 
 The suite covers the parser (Takeout, JSON and CSV formats, plus tiny Firefox, Safari and Chrome databases built in `test/support/history_databases.rb`), the URL categorizer, the analyzer's report sections, the background analysis job and the API endpoints, including upload checks, rate limits and error responses. Rate-limit counters use an in-memory store in tests, cleared before each test.
 
+## Deploy (Fly.io)
+
+Fly.io is the primary deploy path; `fly.toml` is in the repo. One machine in Mumbai (`bom`) runs Thruster → Puma, with Solid Queue inside Puma, next to a Fly Postgres cluster.
+
+```bash
+# 1. Create the app from the existing fly.toml (keep the existing Dockerfile if asked)
+fly launch --copy-config --no-deploy --name browsewrapped-api-<you>
+
+# 2. Postgres: create a cluster and attach it (this sets the DATABASE_URL secret)
+fly postgres create --name browsewrapped-db --region bom
+fly postgres attach browsewrapped-db --app browsewrapped-api-<you>
+
+# 3. Secrets
+fly secrets set SECRET_KEY_BASE=$(bin/rails secret) \
+  CORS_ORIGINS=https://<your-web-app>.vercel.app \
+  GEMINI_API_KEY=<optional>
+
+# Optional: tune the rate limits
+fly secrets set UPLOAD_RATE_LIMIT_PER_MINUTE=10 SHARE_RATE_LIMIT_PER_MINUTE=20
+
+# 4. Deploy, then check
+fly deploy
+curl https://browsewrapped-api-<you>.fly.dev/up
+curl https://browsewrapped-api-<you>.fly.dev/api/v1/sample
+```
+
+Then point browsewrapped-web at `https://browsewrapped-api-<you>.fly.dev`. `fly logs` tails the logs and `fly ssh console -C "bin/rails console"` opens a console.
+
+What `fly.toml` sets up:
+
+- **Release step:** `release_command = "./bin/rails db:prepare"` runs before each new version starts. The first time it creates the primary database plus `<db>_cache`, `<db>_queue` and `<db>_cable` on the same Postgres server (`fly postgres attach` gives the app's user the rights to do that). To use other databases, set `CACHE_DATABASE_URL`, `QUEUE_DATABASE_URL` or `CABLE_DATABASE_URL`.
+- **Port:** Thruster listens on `8080` (`HTTP_PORT`) and proxies to Puma on 3000. The Dockerfile's default of 80 needs root, and the container runs as a normal user.
+- **Health check:** `GET /up` every 30 seconds. HTTPS is enforced by Fly and the app (`assume_ssl`, `force_ssl`, with `/up` excluded).
+- **Jobs and uploads on one machine:** `SOLID_QUEUE_IN_PUMA=true` runs the background analysis in the same machine that received the upload, so the raw file can wait in a local folder (`ANALYSIS_UPLOAD_DIR=/rails/tmp/analysis_uploads`) for the few seconds until the job reads and deletes it. No volume or object storage is needed. If you ever split web and worker onto separate machines, move uploads to object storage first (see "What I'd do next").
+- **Always one machine:** `min_machines_running = 1`, because that machine is also the job worker and runs the daily cleanup (analyses after 7 days, expired share links). Setting it to 0 is cheaper for a demo, but the first request after a pause is slow and the cleanup only runs if the machine happens to be awake at 3am.
+- **Memory:** 1 GB, because uploads of up to 100 MB are parsed in memory.
+
+| Variable | Set by | Required | Purpose |
+| --- | --- | --- | --- |
+| `DATABASE_URL` | `fly postgres attach` | yes | Primary database; the cache, queue and cable databases are derived from it |
+| `SECRET_KEY_BASE` | `fly secrets set` | yes | Rails secret. The app doesn't use encrypted credentials, so this is all it needs. If you add credentials later, set `RAILS_MASTER_KEY` instead |
+| `CORS_ORIGINS` | `fly secrets set` | yes, for the web app | Comma-separated origins allowed to call the API, e.g. `https://browsewrapped.vercel.app`. Empty means no browser origin is allowed |
+| `GEMINI_API_KEY` | `fly secrets set` | no | Turns on AI categorisation |
+| `UPLOAD_RATE_LIMIT_PER_MINUTE`, `SHARE_RATE_LIMIT_PER_MINUTE` | `fly secrets set` | no | Per-IP rate limits (defaults 10 and 20) |
+| `ANALYSIS_SYNC_THRESHOLD_BYTES`, `ANALYSIS_MAX_UPLOAD_BYTES` | `fly secrets set` | no | Inline vs background threshold (5 MB) and upload limit (100 MB) |
+| `CACHE_DATABASE_URL`, `QUEUE_DATABASE_URL`, `CABLE_DATABASE_URL` | `fly secrets set` | no | Override the derived database URLs |
+| `SOLID_QUEUE_IN_PUMA`, `HTTP_PORT`, `ANALYSIS_UPLOAD_DIR`, `RAILS_LOG_LEVEL` | `fly.toml` | – | See above |
+
+**Kamal:** `config/deploy.yml` (the Rails default Kamal config) is still in the repo for deploying to your own server, but Fly.io is the supported path.
+
+To try the production setup locally:
+
+```bash
+RAILS_ENV=production DATABASE_URL=postgres://localhost/browsewrapped_production \
+  SECRET_KEY_BASE=dummy bin/rails db:prepare
+RAILS_ENV=production DATABASE_URL=postgres://localhost/browsewrapped_production \
+  SECRET_KEY_BASE=dummy SOLID_QUEUE_IN_PUMA=true bin/rails server
+curl http://localhost:3000/up
+```
+
 ## Project status
 
-🚧 Actively in development. Next up: a live demo deployment.
+🚧 Actively in development. Fly.io deploy config is ready; next up is the live demo.
 
 ## Author
 
