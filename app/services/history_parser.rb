@@ -105,7 +105,9 @@ class HistoryParser
     return Time.at(s.to_i / 1000.0).utc if s =~ /^\d{13}$/
     # 10-digit seconds
     return Time.at(s.to_i).utc if s =~ /^\d{10}$/
-    Time.parse(s).utc
+    # Exports without an offset are read as UTC, like the epoch formats above,
+    # so the result never depends on the server's local time zone.
+    Time.find_zone!("UTC").parse(s)&.utc
   rescue
     nil
   end

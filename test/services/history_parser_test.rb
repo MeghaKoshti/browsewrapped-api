@@ -51,6 +51,19 @@ class HistoryParserTest < ActiveSupport::TestCase
     assert_equal Time.utc(2026, 6, 1, 10), entries.first[:visited_at]
   end
 
+  test "reads CSV timestamps without an offset as UTC and keeps explicit offsets" do
+    csv = <<~CSV
+      URL,Visit Time
+      https://example.com/a,2026-06-01 10:00:00
+      https://example.com/b,2026-06-01T10:00:00+05:30
+    CSV
+
+    a, b = HistoryParser.parse(csv)
+
+    assert_equal Time.utc(2026, 6, 1, 10), a[:visited_at]
+    assert_equal Time.utc(2026, 6, 1, 4, 30), b[:visited_at]
+  end
+
   test "keeps entries with unreadable timestamps but sets visited_at to nil" do
     json = [ { "url" => "https://example.com", "visitTime" => "not a date" } ].to_json
 
