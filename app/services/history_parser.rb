@@ -9,6 +9,14 @@ class HistoryParser
     new(content).parse
   end
 
+  # Parses an upload on disk. Browser history databases (SQLite) are read with
+  # SqliteHistoryReader; everything else is text for the JSON and CSV parsers.
+  def self.parse_file(path)
+    return SqliteHistoryReader.read(path) if SqliteHistoryReader.sqlite?(path)
+
+    parse(File.read(path))
+  end
+
   def initialize(content)
     @content = content.dup.force_encoding("UTF-8").encode("UTF-8", invalid: :replace, undef: :replace, replace: "")
   end

@@ -26,10 +26,14 @@ class UploadSnifferTest < ActiveSupport::TestCase
     assert_equal :empty, detect("  \n\t")
   end
 
+  test "recognises SQLite databases by their header, before the binary check" do
+    assert_equal :sqlite, detect("SQLite format 3\x00\x10\x00\x01\x01".b)
+    assert_nil detect("SQLite format 2\x00".b)
+  end
+
   test "rejects binary files and plain text" do
     assert_nil detect("\x89PNG\r\n\x1A\n\x00\x00".b)
     assert_nil detect("PK\x03\x04\x14\x00".b)
-    assert_nil detect("SQLite format 3\x00".b)
     assert_nil detect("%PDF-1.7\n%\xE2\xE3\xCF\xD3".b)
     assert_nil detect("just some notes")
   end

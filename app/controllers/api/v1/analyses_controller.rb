@@ -3,6 +3,8 @@ module Api
     class AnalysesController < ApplicationController
       SAMPLE_FILE = Rails.root.join("sample/sample_history.json")
       SAMPLE_CACHE_KEY = "sample_report_v2".freeze # bump when the report shape changes
+      UNSUPPORTED_MEDIA_TYPE_MESSAGE = "Unsupported file type. Please upload a JSON or CSV export, " \
+                                       "or a Firefox, Safari or Chrome history database.".freeze
 
       # Declared before the upload checks so rejected uploads count too.
       rate_limit to: UPLOAD_RATE_LIMIT, within: RATE_LIMIT_WINDOW, store: rate_limit_store,
@@ -33,7 +35,7 @@ module Api
       # POST /api/v1/analyze
       # Original synchronous endpoint, kept for backward compatibility.
       def analyze
-        entries = HistoryParser.parse(upload.read)
+        entries = HistoryParser.parse_file(upload.tempfile.path)
 
         if entries.empty?
           return render_error(:no_entries, AnalyzeHistoryJob::NO_ENTRIES_MESSAGE, :unprocessable_entity)
@@ -110,9 +112,21 @@ module Api
         case UploadSniffer.detect(upload.tempfile.path)
         when :empty
           render_error :empty_file, "The file is empty", :unprocessable_entity
+        when :sqlite
+          require_known_sqlite
         when nil
-          render_error :unsupported_media_type, "Unsupported file type. Please upload a JSON or CSV history export.", :unsupported_media_type
+          render_error :unsupported_media_type, UNSUPPORTED_MEDIA_TYPE_MESSAGE, :unsupported_media_type
         end
+      end
+
+      # Opening the database is cheap, so an unknown or broken SQLite file is
+      # refused here, before anything is stored or queued.
+      def require_known_sqlite
+        return if SqliteHistoryReader.detect(upload.tempfile.path)
+
+        render_error :unsupported_sqlite, SqliteHistoryReader::UNKNOWN_MESSAGE, :unsupported_media_type
+      rescue SqliteHistoryReader::CorruptDatabaseError => e
+        render_error :corrupt_sqlite, e.message, :unprocessable_entity
       end
     end
   end

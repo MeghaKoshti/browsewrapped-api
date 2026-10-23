@@ -1,5 +1,5 @@
 # Looks at the first bytes of an upload to decide whether it can be a history
-# export at all, so images, PDFs, zips or databases are rejected up front.
+# export at all, so images, PDFs or zips are rejected up front.
 # The file name and Content-Type are ignored: the client chooses both.
 module UploadSniffer
   HEAD_BYTES = 4096
@@ -9,9 +9,13 @@ module UploadSniffer
 
   module_function
 
-  # Returns :json, :csv, :empty, or nil when the content is neither.
+  # Returns :json, :csv, :sqlite, :empty, or nil when the content is none of them.
+  # :sqlite only means "a SQLite file"; SqliteHistoryReader.detect says which browser.
   def detect(path)
-    head = File.binread(path, HEAD_BYTES).to_s.delete_prefix(UTF8_BOM)
+    head = File.binread(path, HEAD_BYTES).to_s
+    return :sqlite if head.start_with?(SqliteHistoryReader::HEADER)
+
+    head = head.delete_prefix(UTF8_BOM)
     text = head.lstrip
 
     return :empty if text.empty? && File.size(path) <= HEAD_BYTES

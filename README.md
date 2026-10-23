@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/MeghaKoshti/browsewrapped-api/actions/workflows/ci.yml/badge.svg)](https://github.com/MeghaKoshti/browsewrapped-api/actions/workflows/ci.yml)
 
-**The Rails API behind BrowseWrapped.** It takes a browser-history export, classifies every URL into topics, and returns a "Wrapped"-style analytics report as JSON: persona, trends, heatmaps, sessions, streaks and a topic knowledge graph.
+**The Rails API behind BrowseWrapped.** It takes a browser-history export (JSON, CSV, or the history database straight from Firefox, Safari or Chrome), classifies every URL into topics, and returns a "Wrapped"-style analytics report as JSON: persona, trends, heatmaps, sessions, streaks and a topic knowledge graph.
 
 Frontend: [browsewrapped-web](https://github.com/MeghaKoshti/browsewrapped-web)
 
@@ -11,10 +11,11 @@ Frontend: [browsewrapped-web](https://github.com/MeghaKoshti/browsewrapped-web)
 ## How it works
 
 ```text
-Upload (JSON / CSV)  or  local Chrome history (SQLite)
+Upload (JSON / CSV / Firefox, Safari or Chrome SQLite)  or  local Chrome history
               │
               ▼
    HistoryParser        → normalises entries: url, title, visited_at, visit_count
+   SqliteHistoryReader    (history databases are read-only, from a temp copy)
               │
               ▼
    UrlCategorizer       → maps domains/URLs to topics (Programming, AI & ML, News…)
@@ -118,15 +119,39 @@ Privacy by design:
 
 The original synchronous endpoint, kept for backward compatibility. Upload a history file as multipart form data (`file`, max 100 MB) and get the report back in the same request.
 
-Supported formats:
-
-- **Chrome Takeout:** `BrowserHistory.json` (`{ "Browser History": [...] }`)
-- **JSON array:** `[{ "url", "title", "visitTime", "visitCount" }, ...]` (typical extension export)
-- **CSV:** any file with a `url` column (title, time and count columns are detected automatically; times without a UTC offset are read as UTC)
-
 ```bash
 curl -F file=@sample/sample_history.json http://localhost:3000/api/v1/analyze
 ```
+
+### Supported formats
+
+Both upload endpoints accept the same files. The format is recognised from the content, never the file name, so a renamed file still works.
+
+| Format | File | Recognised by | Timestamps |
+| --- | --- | --- | --- |
+| Chrome Takeout | `BrowserHistory.json` | `{ "Browser History": [...] }` | `time_usec` |
+| JSON array (extension exports) | any `.json` | `[{ "url", "title", "visitTime", "visitCount" }, ...]` | ms, s or ISO 8601 |
+| CSV | any `.csv` / `.txt` | a `url` column (title, time and count columns are detected) | times without a UTC offset are read as UTC |
+| Firefox | `places.sqlite` | tables `moz_places` + `moz_historyvisits` | µs since 1970-01-01 UTC |
+| Safari | `History.db` | tables `history_items` + `history_visits` | seconds since 2001-01-01 UTC |
+| Chrome, Edge, Brave and other Chromium browsers | `History` (no extension) | tables `urls` + `visits` | µs since 1601-01-01 UTC |
+
+Each visit in a database becomes one entry, newest first, capped at 200,000 visits. Other SQLite files get **415** `unsupported_sqlite`, and a damaged one gets **422** `corrupt_sqlite`.
+
+#### Where to find the history database
+
+| Browser | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| Firefox | `%APPDATA%\Mozilla\Firefox\Profiles\<profile>\places.sqlite` | `~/Library/Application Support/Firefox/Profiles/<profile>/places.sqlite` | `~/.mozilla/firefox/<profile>/places.sqlite` (Snap: `~/snap/firefox/common/.mozilla/firefox/`) |
+| Safari | – | `~/Library/Safari/History.db` | – |
+| Chrome | `%LOCALAPPDATA%\Google\Chrome\User Data\Default\History` | `~/Library/Application Support/Google/Chrome/Default/History` | `~/.config/google-chrome/Default/History` |
+| Edge | `%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\History` | `~/Library/Application Support/Microsoft Edge/Default/History` | `~/.config/microsoft-edge/Default/History` |
+
+Tips: `about:support` → *Profile Folder* (Firefox) and `chrome://version` → *Profile Path* (Chrome, Edge) show the exact folder. Other profiles live next to `Default` (`Profile 1`, …).
+
+**Copy the file before uploading, ideally with the browser closed.** Firefox and Chrome lock their database while they run and keep the newest visits in a separate `-wal` file, so uploading the live file can fail or miss recent history. On macOS, reading `~/Library/Safari` from Terminal needs *Full Disk Access*; copying it in Finder (*Go → Go to Folder…*) also works.
+
+How databases are read safely: the upload is copied to a private temp folder and opened **read-only and immutable** (no locks, no journal or WAL files), extensions are never loaded, functions in the file's schema are not trusted, only real tables (not views) are queried, each query has a 10-second limit, and the temp copy is deleted afterwards. The normal upload size limit applies.
 
 ### `GET /api/v1/sample`
 
@@ -138,7 +163,8 @@ Before anything is stored or parsed, `/analyses` and `/analyze` check the upload
 
 - no `file` → **422** `missing_file`; an empty file → **422** `empty_file`
 - over the size limit → **413** `payload_too_large`
-- not JSON or CSV → **415** `unsupported_media_type`. The first bytes are sniffed (JSON starts with `{` or `[`, CSV has a comma in its header line, binary bytes are rejected), so a PNG renamed to `history.json` is refused and a CSV saved as `.txt` still works.
+- not JSON, CSV or SQLite → **415** `unsupported_media_type`. The first bytes are sniffed (JSON starts with `{` or `[`, CSV has a comma in its header line, SQLite starts with `SQLite format 3\0`, other binary bytes are rejected), so a PNG renamed to `history.json` is refused and a CSV saved as `.txt` still works.
+- a SQLite database that isn't Firefox, Safari or Chrome history → **415** `unsupported_sqlite`; a damaged one → **422** `corrupt_sqlite`
 - JSON/CSV the parser can't use → **422** `unsupported_format` (for `/analyses`, the analysis ends up `failed` with that message instead)
 
 ### Rate limits
@@ -158,8 +184,8 @@ Every error response has the same shape:
 
 ```json
 {
-  "error": { "code": "unsupported_media_type", "message": "Unsupported file type. Please upload a JSON or CSV history export." },
-  "error_message": "Unsupported file type. Please upload a JSON or CSV history export."
+  "error": { "code": "unsupported_media_type", "message": "Unsupported file type. Please upload a JSON or CSV export, or a Firefox, Safari or Chrome history database." },
+  "error_message": "Unsupported file type. Please upload a JSON or CSV export, or a Firefox, Safari or Chrome history database."
 }
 ```
 
@@ -171,8 +197,8 @@ Branch on `error.code`; `error.message` is safe to show users. `error_message` r
 | 403 | `invalid_delete_token` |
 | 404 | `not_found` |
 | 413 | `payload_too_large` |
-| 415 | `unsupported_media_type` |
-| 422 | `missing_file`, `empty_file`, `unsupported_format`, `no_entries`, `analysis_failed`, `nothing_to_share`, `invalid_report`, `chrome_read_failed` |
+| 415 | `unsupported_media_type`, `unsupported_sqlite` |
+| 422 | `missing_file`, `empty_file`, `unsupported_format`, `corrupt_sqlite`, `no_entries`, `analysis_failed`, `nothing_to_share`, `invalid_report`, `chrome_read_failed` |
 | 429 | `rate_limited` |
 
 ### `GET /api/v1/chrome`
@@ -205,7 +231,7 @@ Compares your most recent stretch of browsing with the one just before it: "Last
 
 - Ruby on Rails 8.1 (API mode)
 - PostgreSQL
-- SQLite3 (to read Chrome's local history file)
+- SQLite3 (to read uploaded Firefox, Safari and Chrome history databases, and the local Chrome history)
 - Solid Queue (background analysis of large files)
 - Rack CORS (allows the Vite dev server on `localhost:5173`)
 - Minitest, RuboCop and Brakeman, run on every push with GitHub Actions
@@ -237,7 +263,7 @@ Then start [browsewrapped-web](https://github.com/MeghaKoshti/browsewrapped-web)
 bin/rails test
 ```
 
-The suite covers the parser (Takeout, JSON and CSV formats), the URL categorizer, the analyzer's report sections, the background analysis job and the API endpoints, including upload checks, rate limits and error responses. Rate-limit counters use an in-memory store in tests, cleared before each test.
+The suite covers the parser (Takeout, JSON and CSV formats, plus tiny Firefox, Safari and Chrome databases built in `test/support/history_databases.rb`), the URL categorizer, the analyzer's report sections, the background analysis job and the API endpoints, including upload checks, rate limits and error responses. Rate-limit counters use an in-memory store in tests, cleared before each test.
 
 ## Project status
 

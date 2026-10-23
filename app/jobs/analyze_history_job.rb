@@ -12,7 +12,7 @@ class AnalyzeHistoryJob < ApplicationJob
     return if analysis.nil? || analysis.finished?
 
     analysis.update!(status: :processing)
-    entries = HistoryParser.parse(AnalysisUpload.read(analysis.id))
+    entries = HistoryParser.parse_file(AnalysisUpload.path_for(analysis.id))
 
     if entries.empty?
       analysis.update!(status: :failed, error_message: NO_ENTRIES_MESSAGE)
