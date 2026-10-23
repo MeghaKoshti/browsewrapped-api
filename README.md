@@ -122,7 +122,7 @@ Supported formats:
 
 - **Chrome Takeout:** `BrowserHistory.json` (`{ "Browser History": [...] }`)
 - **JSON array:** `[{ "url", "title", "visitTime", "visitCount" }, ...]` (typical extension export)
-- **CSV:** any file with a `url` column (title, time and count columns are detected automatically)
+- **CSV:** any file with a `url` column (title, time and count columns are detected automatically; times without a UTC offset are read as UTC)
 
 ```bash
 curl -F file=@sample/sample_history.json http://localhost:3000/api/v1/analyze
