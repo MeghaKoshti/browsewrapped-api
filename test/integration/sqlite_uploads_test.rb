@@ -26,6 +26,20 @@ class SqliteUploadsTest < ActionDispatch::IntegrationTest
     assert_equal 10, body.dig("period_comparison", "window_days"), "20 days of history compare 10 with 10"
   end
 
+  test "no copy of the upload is left in the temp dir after the request" do
+    file = upload(chrome_history_db)
+    tmp  = Dir.mktmpdir
+
+    # Rack writes multipart uploads to TMPDIR; without Rack::TempfileReaper
+    # they stay there until Ruby's GC happens to finalise them.
+    with_env("TMPDIR", tmp) { post "/api/v1/analyze", params: { file: file } }
+
+    assert_response :success
+    assert_empty Dir.children(tmp)
+  ensure
+    FileUtils.rm_rf(tmp)
+  end
+
   test "POST /api/v1/analyses analyses a small Safari History.db straight away" do
     with_env("ANALYSIS_SYNC_THRESHOLD_BYTES", 5.megabytes) do
       post "/api/v1/analyses", params: { file: upload(safari_history_db) }
