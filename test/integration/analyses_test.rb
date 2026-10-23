@@ -39,6 +39,8 @@ class AnalysesTest < ActionDispatch::IntegrationTest
     %w[summary persona topics top_domains daily_pattern knowledge_graph].each do |key|
       assert body.key?(key), "expected #{key} in the sample report"
     end
+    assert_equal 30, body.dig("period_comparison", "window_days")
+    assert_operator body.dig("period_comparison", "topics").size, :>, 0
   end
 
   test "GET /api/v1/sample is served from the cache on repeat calls" do

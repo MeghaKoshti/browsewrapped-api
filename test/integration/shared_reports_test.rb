@@ -40,6 +40,7 @@ class SharedReportsTest < ActionDispatch::IntegrationTest
     assert_response :success
     body = response.parsed_body
     assert body["report"].key?("persona")
+    assert_equal 30, body.dig("report", "period_comparison", "window_days")
     assert_not body["report"].key?("top_pages")
     assert_not body["report"].key?("top_searches")
     assert_not body.key?("delete_token")

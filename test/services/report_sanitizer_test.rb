@@ -38,4 +38,36 @@ class ReportSanitizerTest < ActiveSupport::TestCase
   test "drops unknown sections" do
     assert_not ReportSanitizer.call({ "summary" => {}, "secret" => "x" }).key?("secret")
   end
+
+  test "keeps the period comparison with topic names only" do
+    comparison = @shared["period_comparison"]
+
+    assert_equal @report[:period_comparison].deep_stringify_keys, comparison
+    assert_equal %w[topic current previous change_pct], comparison["topics"].first.keys
+  end
+
+  test "drops anything unexpected inside the period comparison" do
+    report = {
+      "period_comparison" => {
+        "window_days" => 30, "secret" => "x",
+        "current"  => { "visits" => 5, "top_domain" => "secret.example" },
+        "previous" => { "visits" => 4 },
+        "changes"  => { "visits_pct" => 25.0, "domains" => [ "secret.example" ] },
+        "topics"   => [ { "topic" => "Programming", "current" => 5, "url" => "https://secret.example/page" }, "junk" ]
+      }
+    }
+
+    shared = ReportSanitizer.call(report)["period_comparison"]
+
+    assert_not_includes shared.to_json, "secret"
+    assert_equal({ "visits" => 5 }, shared["current"])
+    assert_equal [ { "topic" => "Programming", "current" => 5 } ], shared["topics"]
+  end
+
+  test "keeps a null period comparison as null" do
+    shared = ReportSanitizer.call({ "period_comparison" => nil })
+
+    assert shared.key?("period_comparison")
+    assert_nil shared["period_comparison"]
+  end
 end

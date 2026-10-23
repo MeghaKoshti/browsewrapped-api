@@ -3,7 +3,7 @@ module Api
     class AnalysesController < ApplicationController
       MAX_FILE_SIZE = 100.megabytes
       SAMPLE_FILE = Rails.root.join("sample/sample_history.json")
-      SAMPLE_CACHE_KEY = "sample_report_v1".freeze
+      SAMPLE_CACHE_KEY = "sample_report_v2".freeze # bump when the report shape changes
 
       before_action :require_valid_upload, only: %i[analyze create]
 
