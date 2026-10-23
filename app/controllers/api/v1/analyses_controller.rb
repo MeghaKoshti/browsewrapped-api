@@ -1,10 +1,12 @@
 module Api
   module V1
     class AnalysesController < ApplicationController
-      MAX_FILE_SIZE = 100.megabytes
       SAMPLE_FILE = Rails.root.join("sample/sample_history.json")
       SAMPLE_CACHE_KEY = "sample_report_v2".freeze # bump when the report shape changes
 
+      # Declared before the upload checks so rejected uploads count too.
+      rate_limit to: UPLOAD_RATE_LIMIT, within: RATE_LIMIT_WINDOW, store: rate_limit_store,
+                 name: "uploads", only: %i[analyze create]
       before_action :require_valid_upload, only: %i[analyze create]
 
       # POST /api/v1/analyses
@@ -25,10 +27,7 @@ module Api
 
       # GET /api/v1/analyses/:id
       def show
-        analysis = Analysis.find_by(id: params[:id])
-        return render json: { error: "Analysis not found" }, status: :not_found unless analysis
-
-        render json: analysis.as_api_json
+        render json: Analysis.find(params[:id]).as_api_json
       end
 
       # POST /api/v1/analyze
@@ -37,16 +36,18 @@ module Api
         entries = HistoryParser.parse(upload.read)
 
         if entries.empty?
-          return render json: { error: AnalyzeHistoryJob::NO_ENTRIES_MESSAGE }, status: :unprocessable_entity
+          return render_error(:no_entries, AnalyzeHistoryJob::NO_ENTRIES_MESSAGE, :unprocessable_entity)
         end
 
         result = HistoryAnalyzer.new(entries).analyze
         result[:meta] = { total_entries_parsed: entries.size, source: "upload", processed_at: Time.current.iso8601 }
 
         render json: result
+      rescue HistoryParser::UnsupportedFormatError => e
+        render_error :unsupported_format, e.message, :unprocessable_entity
       rescue => e
         Rails.logger.error("Analysis error: #{e.message}\n#{e.backtrace.first(5).join("\n")}")
-        render json: { error: e.message }, status: :unprocessable_entity
+        render_error :analysis_failed, "Something went wrong while analysing your history. Please try again.", :unprocessable_entity
       end
 
       # GET /api/v1/sample
@@ -65,7 +66,7 @@ module Api
 
       def chrome
         unless ChromeHistoryReader.available?
-          return render json: { error: "Chrome history not found on this machine." }, status: :not_found
+          return render_error(:not_found, "Chrome history not found on this machine.", :not_found)
         end
 
         chrome_data = ChromeHistoryReader.read
@@ -78,12 +79,16 @@ module Api
         render json: result
       rescue => e
         Rails.logger.error("Chrome read error: #{e.message}\n#{e.backtrace.first(5).join("\n")}")
-        render json: { error: e.message }, status: :unprocessable_entity
+        render_error :chrome_read_failed, e.message, :unprocessable_entity
       end
 
       # Uploads smaller than this many bytes are analysed synchronously.
       def self.sync_threshold
         ENV.fetch("ANALYSIS_SYNC_THRESHOLD_BYTES", 5.megabytes).to_i
+      end
+
+      def self.max_upload_bytes
+        ENV.fetch("ANALYSIS_MAX_UPLOAD_BYTES", 100.megabytes).to_i
       end
 
       private
@@ -94,11 +99,19 @@ module Api
 
       def require_valid_upload
         unless upload.respond_to?(:tempfile)
-          return render json: { error: "No file provided" }, status: :unprocessable_entity
+          return render_error(:missing_file, "No file provided", :unprocessable_entity)
         end
 
-        if upload.size > MAX_FILE_SIZE
-          render json: { error: "File too large (max 100 MB)" }, status: :unprocessable_entity
+        max = self.class.max_upload_bytes
+        if upload.size > max
+          return render_error(:payload_too_large, "File too large (max #{ActiveSupport::NumberHelper.number_to_human_size(max)})", :content_too_large)
+        end
+
+        case UploadSniffer.detect(upload.tempfile.path)
+        when :empty
+          render_error :empty_file, "The file is empty", :unprocessable_entity
+        when nil
+          render_error :unsupported_media_type, "Unsupported file type. Please upload a JSON or CSV history export.", :unsupported_media_type
         end
       end
     end

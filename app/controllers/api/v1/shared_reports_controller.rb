@@ -2,6 +2,8 @@ module Api
   module V1
     # Public share links for reports (/r/:token in the web app).
     class SharedReportsController < ApplicationController
+      rate_limit to: SHARE_RATE_LIMIT, within: RATE_LIMIT_WINDOW, store: rate_limit_store,
+                 name: "shares", only: :create
       before_action :find_shared_report, only: %i[show destroy]
 
       # POST /api/v1/shared_reports
@@ -9,7 +11,7 @@ module Api
       # the client already has (sample data, Chrome import).
       def create
         report = source_report
-        return render json: { error: "Nothing to share" }, status: :unprocessable_entity if report.blank?
+        return render_error(:nothing_to_share, "Nothing to share", :unprocessable_entity) if report.blank?
 
         shared = SharedReport.build_from_report(report)
         if shared.save
@@ -20,7 +22,7 @@ module Api
             delete_token: shared.delete_token # returned once, never again
           }, status: :created
         else
-          render json: { error: shared.errors.full_messages.to_sentence }, status: :unprocessable_entity
+          render_error :invalid_report, shared.errors.full_messages.to_sentence, :unprocessable_entity
         end
       end
 
@@ -37,7 +39,7 @@ module Api
       # DELETE /api/v1/shared_reports/:token  (header X-Delete-Token)
       def destroy
         unless @shared_report.deletable_with?(request.headers["X-Delete-Token"] || params[:delete_token])
-          return render json: { error: "Invalid delete token" }, status: :forbidden
+          return render_error(:invalid_delete_token, "Invalid delete token", :forbidden)
         end
 
         @shared_report.destroy!
@@ -48,7 +50,7 @@ module Api
 
       def find_shared_report
         @shared_report = SharedReport.active.find_by(token: params[:token].to_s)
-        render json: { error: "This shared report doesn't exist or has expired" }, status: :not_found unless @shared_report
+        render_error :not_found, "This shared report doesn't exist or has expired", :not_found unless @shared_report
       end
 
       def source_report

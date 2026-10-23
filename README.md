@@ -77,6 +77,7 @@ curl http://localhost:3000/api/v1/analyses/<id>
 | --- | --- | --- |
 | `ANALYSIS_SYNC_THRESHOLD_BYTES` | `5242880` (5 MB) | Uploads smaller than this are analysed inline |
 | `ANALYSIS_UPLOAD_DIR` | `tmp/analysis_uploads` | Where uploads wait for the job (must be shared by web and worker) |
+| `ANALYSIS_MAX_UPLOAD_BYTES` | `104857600` (100 MB) | Larger uploads get **413** |
 
 In production the job runs on Solid Queue inside Puma (`SOLID_QUEUE_IN_PUMA=true`, already set in `config/deploy.yml`), or run `bin/jobs` as a separate worker on the same machine. `CleanupOldAnalysesJob` runs daily (`config/recurring.yml`) and removes analyses older than 7 days.
 
@@ -130,6 +131,49 @@ curl -F file=@sample/sample_history.json http://localhost:3000/api/v1/analyze
 ### `GET /api/v1/sample`
 
 Returns the report for the bundled synthetic file (`sample/sample_history.json`), in the same shape as `/analyze` with `meta.source = "sample"`. The result is cached for a day, so repeat calls are instant. The web app's **Try with sample data** button uses this.
+
+### Upload checks
+
+Before anything is stored or parsed, `/analyses` and `/analyze` check the upload:
+
+- no `file` → **422** `missing_file`; an empty file → **422** `empty_file`
+- over the size limit → **413** `payload_too_large`
+- not JSON or CSV → **415** `unsupported_media_type`. The first bytes are sniffed (JSON starts with `{` or `[`, CSV has a comma in its header line, binary bytes are rejected), so a PNG renamed to `history.json` is refused and a CSV saved as `.txt` still works.
+- JSON/CSV the parser can't use → **422** `unsupported_format` (for `/analyses`, the analysis ends up `failed` with that message instead)
+
+### Rate limits
+
+Per IP, using Rails 8's `rate_limit` with counters in Solid Cache (shared by all workers). Over the limit you get **429** `rate_limited` with a `Retry-After: 60` header.
+
+| Endpoint | Env var | Default |
+| --- | --- | --- |
+| `POST /api/v1/analyses` and `POST /api/v1/analyze` (one shared counter) | `UPLOAD_RATE_LIMIT_PER_MINUTE` | `10` per minute |
+| `POST /api/v1/shared_reports` | `SHARE_RATE_LIMIT_PER_MINUTE` | `20` per minute |
+
+Reading endpoints (polling, sample, shared report views) are not limited.
+
+### Errors
+
+Every error response has the same shape:
+
+```json
+{
+  "error": { "code": "unsupported_media_type", "message": "Unsupported file type. Please upload a JSON or CSV history export." },
+  "error_message": "Unsupported file type. Please upload a JSON or CSV history export."
+}
+```
+
+Branch on `error.code`; `error.message` is safe to show users. `error_message` repeats the message as a plain string for older clients.
+
+| Status | Codes |
+| --- | --- |
+| 400 | `bad_request` (malformed JSON body, missing parameter) |
+| 403 | `invalid_delete_token` |
+| 404 | `not_found` |
+| 413 | `payload_too_large` |
+| 415 | `unsupported_media_type` |
+| 422 | `missing_file`, `empty_file`, `unsupported_format`, `no_entries`, `analysis_failed`, `nothing_to_share`, `invalid_report`, `chrome_read_failed` |
+| 429 | `rate_limited` |
 
 ### `GET /api/v1/chrome`
 
@@ -193,7 +237,7 @@ Then start [browsewrapped-web](https://github.com/MeghaKoshti/browsewrapped-web)
 bin/rails test
 ```
 
-The suite covers the parser (Takeout, JSON and CSV formats), the URL categorizer, the analyzer's report sections, the background analysis job and the API endpoints.
+The suite covers the parser (Takeout, JSON and CSV formats), the URL categorizer, the analyzer's report sections, the background analysis job and the API endpoints, including upload checks, rate limits and error responses. Rate-limit counters use an in-memory store in tests, cleared before each test.
 
 ## Project status
 
