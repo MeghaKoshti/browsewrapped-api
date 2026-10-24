@@ -1,6 +1,8 @@
 # One history-analysis run. Large uploads are analysed in the background by
 # AnalyzeHistoryJob; the client polls GET /api/v1/analyses/:id for the result.
 class Analysis < ApplicationRecord
+  include DeleteToken
+
   RETENTION = 7.days
 
   enum :status, {
@@ -11,6 +13,12 @@ class Analysis < ApplicationRecord
   }, default: "pending", validate: true
 
   scope :expired, -> { where(created_at: ...RETENTION.ago) }
+
+  # Removes the report and any upload still waiting for the job.
+  def purge!
+    AnalysisUpload.delete(id)
+    destroy!
+  end
 
   def finished?
     completed? || failed?

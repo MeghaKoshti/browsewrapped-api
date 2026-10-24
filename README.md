@@ -27,7 +27,7 @@ Upload (JSON / CSV / Firefox, Safari or Chrome SQLite)  or  local Chrome history
         JSON response   → rendered by browsewrapped-web
 ```
 
-Small files are processed **in memory during the request**. Large files are analysed in the background by a Solid Queue job (see below): the raw upload is kept on disk only until the job has read it, and the finished report is deleted after 7 days.
+Small files are processed **in memory during the request**. Large files are analysed in the background by a Solid Queue job (see below): the raw upload is kept on disk only until the job has read it, and the finished report is deleted after 7 days (or straight away with its delete token, see [Privacy](#privacy)).
 
 ## Architecture & decisions
 
@@ -43,7 +43,7 @@ flowchart LR
 
 **Key decisions**
 
-- **Store aggregates, not history.** Uploads are parsed in memory; the raw file lives only until the job reads it, and reports are deleted after 7 days.
+- **Store the report, not the history file.** Uploads are parsed in memory; the raw file lives only until the job reads it. The report is kept for 7 days and can be deleted at any time (see [Privacy](#privacy) for exactly what it contains).
 - **Async for big files, sync for small ones.** Solid Queue keeps 100 MB uploads from timing out, while demo-sized files skip the queue for a faster first impression.
 - **JSONB for reports.** The report shape changes often; JSONB stores it without migrations and is still queryable.
 - **Rules first, LLM second, cached per domain.** The LLM sees only domain names the rules couldn't place, in one batched call, and never the same domain twice.
@@ -54,7 +54,6 @@ flowchart LR
 
 - Stream-parse very large Takeout files instead of reading them into memory in the job.
 - Move uploads to object storage (Active Storage + S3) so web and worker can run on separate machines.
-- Add an admin view to review and correct AI categories (`source: "manual"`).
 
 ## API
 
@@ -64,6 +63,12 @@ Upload a history file as multipart form data (`file`, max 100 MB). Returns an an
 
 - Files under 5 MB are analysed straight away: **201** with `{ id, status: "completed", result }`.
 - Bigger files are queued for `AnalyzeHistoryJob`: **202** with `{ id, status: "pending" }`.
+
+The response also has a **`delete_token`**, returned only this once. Only its SHA-256 digest is stored.
+
+### `DELETE /api/v1/analyses/:id`
+
+Deletes the report (and the upload, if the job hasn't read it yet) right away. Send the token from the create response in the `X-Delete-Token` header: **204**, **403** `invalid_delete_token` for a wrong or missing token, **404** for an unknown id.
 
 ### `GET /api/v1/analyses/:id`
 
@@ -84,17 +89,18 @@ In production the job runs on Solid Queue inside Puma (`SOLID_QUEUE_IN_PUMA=true
 
 ### AI categorisation for "Other" domains
 
-After the rule-based `UrlCategorizer`, the background job sends the most-visited domains that are still "Other" to an LLM (Google Gemini, free tier) in **one batched call**, and maps them onto the existing categories only.
+After the rule-based `UrlCategorizer`, the job sends the most-visited domains that are still "Other" to an LLM (Google Gemini) in **one batched call**, and maps them onto the existing categories only.
 
 - **Cost-aware:** top 50 domains per report, and every answer is cached in `domain_categories`, so a domain is never sent twice. Rows with `source: "manual"` let you fix a category by hand.
-- **Private:** only bare domain names are sent, never URLs, page titles or searches.
+- **Private:** only bare public domain names are sent, never URLs, page titles or searches. IP addresses, `localhost`, single-label intranet names (`wiki`, `jira`) and `*.local`, `*.internal`, `*.corp`, `*.lan`, `*.home`, `*.intranet` hosts are never sent.
+- **Cheap and quick:** Flash-Lite by default, with thinking switched off (`thinkingBudget: 0`). On the inline path (small uploads, where a person is waiting) the LLM call gets a 5-second budget in total; the background job allows 25 seconds.
 - **Fail-safe:** no API key, a timeout, an error or an invalid answer just leaves those domains as "Other". Responses are validated, and unknown categories become "Other".
 - The report's `meta.ai_classified_domains` says how many domains the AI categorised.
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
 | `GEMINI_API_KEY` | none | Turns the feature on ([free key](https://aistudio.google.com/apikey)) |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Model to use |
+| `GEMINI_MODEL` | `gemini-2.5-flash-lite` | Model to use |
 | `AI_CATEGORISATION` | `on` | Set to `off` to disable |
 | `AI_CATEGORISATION_MAX_DOMAINS` | `50` | Domains per report sent to the LLM |
 
@@ -195,7 +201,7 @@ Branch on `error.code`; `error.message` is safe to show users. `error_message` r
 | --- | --- |
 | 400 | `bad_request` (malformed JSON body, missing parameter) |
 | 403 | `invalid_delete_token` |
-| 404 | `not_found` |
+| 404 | `not_found`, `disabled` (local Chrome import switched off) |
 | 413 | `payload_too_large` |
 | 415 | `unsupported_media_type`, `unsupported_sqlite` |
 | 422 | `missing_file`, `empty_file`, `unsupported_format`, `corrupt_sqlite`, `no_entries`, `analysis_failed`, `nothing_to_share`, `invalid_report`, `chrome_read_failed` |
@@ -203,7 +209,21 @@ Branch on `error.code`; `error.message` is safe to show users. `error_message` r
 
 ### `GET /api/v1/chrome`
 
-Reads the local Chrome/Chromium history database directly (Linux and macOS), for when the API runs on your own machine.
+Reads the local Chrome/Chromium history database directly (Linux and macOS), for when the API runs on your own machine. It reads the history of **the machine the API runs on**, so it is off unless `LOCAL_CHROME_IMPORT=on` (the default only in development) and returns **404** `disabled` otherwise.
+
+## Privacy
+
+What the server keeps, and for how long:
+
+| Data | Where | Kept for |
+| --- | --- | --- |
+| The uploaded file | Request memory (small files) or `ANALYSIS_UPLOAD_DIR` (large files) | Until it is parsed: seconds. Never logged |
+| The report (`analyses.result`) | PostgreSQL | **7 days**, or until you call `DELETE /api/v1/analyses/:id` with the delete token. It includes your top 15 pages (URLs and titles), up to 30 search queries, your Chrome searches and top domains, plus the aggregated charts. Anyone with the analysis id can read it, so the id is never shown in share links |
+| A shared report | PostgreSQL | 30 days, or until deleted with its delete token. Aggregates only (see `ReportSanitizer`) |
+| Domain names the rules couldn't place | Sent to Gemini; the answer is cached in `domain_categories` | The cache is kept; it holds domain names and categories, nothing tied to a person |
+
+- Request logs filter `report`, `email`, tokens and secrets (`config/initializers/filter_parameter_logging.rb`); a test checks that a posted report shows up as `[FILTERED]`.
+- Delete tokens and share tokens are random; only SHA-256 digests of delete tokens are stored.
 
 ### Response (top-level keys)
 
@@ -309,6 +329,8 @@ What `fly.toml` sets up:
 | `SECRET_KEY_BASE` | `fly secrets set` | yes | Rails secret. The app doesn't use encrypted credentials, so this is all it needs. If you add credentials later, set `RAILS_MASTER_KEY` instead |
 | `CORS_ORIGINS` | `fly secrets set` | yes, for the web app | Comma-separated origins allowed to call the API, e.g. `https://browsewrapped.vercel.app`. Empty means no browser origin is allowed |
 | `GEMINI_API_KEY` | `fly secrets set` | no | Turns on AI categorisation |
+| `GEMINI_MODEL` | `fly secrets set` | no | Defaults to `gemini-2.5-flash-lite` |
+| `LOCAL_CHROME_IMPORT` | – | no | Leave unset in production: `GET /api/v1/chrome` stays off (404) |
 | `UPLOAD_RATE_LIMIT_PER_MINUTE`, `SHARE_RATE_LIMIT_PER_MINUTE` | `fly secrets set` | no | Per-IP rate limits (defaults 10 and 20) |
 | `ANALYSIS_SYNC_THRESHOLD_BYTES`, `ANALYSIS_MAX_UPLOAD_BYTES` | `fly secrets set` | no | Inline vs background threshold (5 MB) and upload limit (100 MB) |
 | `CACHE_DATABASE_URL`, `QUEUE_DATABASE_URL`, `CABLE_DATABASE_URL` | `fly secrets set` | no | Override the derived database URLs |

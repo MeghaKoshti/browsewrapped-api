@@ -4,7 +4,7 @@ Rails.application.routes.draw do
   namespace :api do
     namespace :v1 do
       post "analyze", to: "analyses#analyze"
-      resources :analyses, only: %i[create show]
+      resources :analyses, only: %i[create show destroy]
       resources :shared_reports, only: %i[create show destroy], param: :token
       get  "chrome",  to: "analyses#chrome"
       get  "sample",  to: "analyses#sample"

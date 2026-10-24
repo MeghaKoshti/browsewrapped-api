@@ -3,7 +3,7 @@ require "json"
 require "uri"
 
 # Classifies domain names into BrowseWrapped's existing categories with one
-# batched LLM call (Google Gemini, free tier).
+# batched LLM call (Google Gemini).
 #
 # Privacy: only bare domain names are sent, never URLs, page titles or searches.
 #
@@ -15,6 +15,7 @@ class LlmDomainClassifier
   class Error < StandardError; end
 
   ENDPOINT      = "https://generativelanguage.googleapis.com/v1beta/models".freeze
+  DEFAULT_MODEL = "gemini-2.5-flash-lite".freeze
   OPEN_TIMEOUT  = 5
   READ_TIMEOUT  = 20
 
@@ -26,10 +27,28 @@ class LlmDomainClassifier
     UrlCategorizer::CATEGORY_COLORS.keys - [ "Search" ]
   end
 
-  def initialize(transport: nil, api_key: ENV["GEMINI_API_KEY"], model: ENV.fetch("GEMINI_MODEL", "gemini-2.5-flash"))
+  # time_budget: total seconds for connect + response (used on the sync upload
+  # path, where a user is waiting). nil keeps the background-job timeouts.
+  def initialize(transport: nil, api_key: ENV["GEMINI_API_KEY"], model: ENV.fetch("GEMINI_MODEL", DEFAULT_MODEL), time_budget: nil)
     @api_key   = api_key
     @model     = model
     @transport = transport || method(:gemini_request)
+    @open_timeout, @read_timeout = timeouts_for(time_budget)
+  end
+
+  attr_reader :model, :open_timeout, :read_timeout
+
+  # Request body sent to Gemini. Thinking is switched off: categorising domain
+  # names doesn't need it, and thinking tokens are billed as output.
+  def request_body(prompt)
+    {
+      contents: [ { parts: [ { text: prompt } ] } ],
+      generationConfig: {
+        temperature: 0,
+        responseMimeType: "application/json",
+        thinkingConfig: { thinkingBudget: 0 }
+      }
+    }
   end
 
   # Returns { domain => { category:, confidence: } } for every requested domain.
@@ -80,12 +99,10 @@ class LlmDomainClassifier
     request = Net::HTTP::Post.new(uri)
     request["Content-Type"]   = "application/json"
     request["x-goog-api-key"] = @api_key
-    request.body = JSON.generate(
-      contents: [ { parts: [ { text: prompt } ] } ],
-      generationConfig: { temperature: 0, responseMimeType: "application/json" }
-    )
+    request.body = JSON.generate(request_body(prompt))
 
-    response = Net::HTTP.start(uri.host, uri.port, use_ssl: true, open_timeout: OPEN_TIMEOUT, read_timeout: READ_TIMEOUT) do |http|
+    response = Net::HTTP.start(uri.host, uri.port, use_ssl: true, open_timeout: open_timeout,
+                               read_timeout: read_timeout) do |http|
       http.request(request)
     end
     raise Error, "Gemini HTTP #{response.code}" unless response.code.to_i == 200
@@ -94,5 +111,12 @@ class LlmDomainClassifier
       raise(Error, "Empty Gemini response")
   rescue Net::OpenTimeout, Net::ReadTimeout, SocketError, SystemCallError, OpenSSL::SSL::SSLError => e
     raise Error, "Gemini request failed: #{e.class}"
+  end
+
+  def timeouts_for(budget)
+    return [ OPEN_TIMEOUT, READ_TIMEOUT ] if budget.nil?
+
+    open = [ budget * 0.4, OPEN_TIMEOUT ].min
+    [ open, budget - open ]
   end
 end

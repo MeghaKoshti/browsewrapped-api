@@ -14,17 +14,33 @@ module Api
       # POST /api/v1/analyses
       # Stores the upload and analyses it in the background (202 + id to poll).
       # Files under the sync threshold are analysed inline to keep demos fast (201).
+      # The response carries a one-time delete_token for DELETE below.
       def create
-        analysis = Analysis.create!(source: "upload", filename: upload.original_filename)
+        analysis = Analysis.new(source: "upload", filename: upload.original_filename)
+        analysis.assign_delete_token
+        analysis.save!
         AnalysisUpload.store(analysis.id, upload.tempfile.path)
 
         if upload.size < self.class.sync_threshold
-          AnalyzeHistoryJob.perform_now(analysis.id)
-          render json: analysis.reload.as_api_json, status: :created
+          AnalyzeHistoryJob.perform_now(analysis.id, sync: true)
+          render json: analysis.reload.as_api_json.merge(delete_token: analysis.delete_token), status: :created
         else
           AnalyzeHistoryJob.perform_later(analysis.id)
-          render json: analysis.as_api_json, status: :accepted, location: api_v1_analysis_url(analysis)
+          render json: analysis.as_api_json.merge(delete_token: analysis.delete_token),
+                 status: :accepted, location: api_v1_analysis_url(analysis)
         end
+      end
+
+      # DELETE /api/v1/analyses/:id  (header X-Delete-Token)
+      # Deletes the report and any upload still waiting for the job, right now.
+      def destroy
+        analysis = Analysis.find(params[:id])
+        unless analysis.deletable_with?(request.headers["X-Delete-Token"])
+          return render_error(:invalid_delete_token, "Invalid delete token", :forbidden)
+        end
+
+        analysis.purge!
+        head :no_content
       end
 
       # GET /api/v1/analyses/:id
@@ -66,7 +82,14 @@ module Api
         render json: result
       end
 
+      # GET /api/v1/chrome
+      # Reads the Chrome history of the machine the API runs on, so it is only
+      # for running the API on your own computer (LOCAL_CHROME_IMPORT=on).
       def chrome
+        unless self.class.local_chrome_import?
+          return render_error(:disabled, "Reading local Chrome history is turned off on this server.", :not_found)
+        end
+
         unless ChromeHistoryReader.available?
           return render_error(:not_found, "Chrome history not found on this machine.", :not_found)
         end
@@ -82,6 +105,11 @@ module Api
       rescue => e
         Rails.logger.error("Chrome read error: #{e.message}\n#{e.backtrace.first(5).join("\n")}")
         render_error :chrome_read_failed, e.message, :unprocessable_entity
+      end
+
+      # On by default only in development.
+      def self.local_chrome_import?
+        ENV.fetch("LOCAL_CHROME_IMPORT", Rails.env.development? ? "on" : "off") == "on"
       end
 
       # Uploads smaller than this many bytes are analysed synchronously.

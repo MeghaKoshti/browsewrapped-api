@@ -48,4 +48,29 @@ class LlmDomainClassifierTest < ActiveSupport::TestCase
   ensure
     ENV["GEMINI_API_KEY"] = original
   end
+
+  test "switches thinking off and defaults to Flash-Lite" do
+    original = ENV.delete("GEMINI_MODEL")
+    classifier = LlmDomainClassifier.new(api_key: "k")
+
+    body = classifier.request_body("hi")
+
+    assert_equal({ thinkingBudget: 0 }, body.dig(:generationConfig, :thinkingConfig))
+    assert_equal "gemini-2.5-flash-lite", classifier.model
+  ensure
+    ENV["GEMINI_MODEL"] = original
+  end
+
+  test "a time budget caps connect plus read time" do
+    classifier = LlmDomainClassifier.new(api_key: "k", time_budget: 5)
+
+    assert_operator classifier.open_timeout + classifier.read_timeout, :<=, 5
+    assert_operator classifier.read_timeout, :>, 0
+  end
+
+  test "without a budget the background timeouts apply" do
+    classifier = LlmDomainClassifier.new(api_key: "k")
+
+    assert_equal [ 5, 20 ], [ classifier.open_timeout, classifier.read_timeout ]
+  end
 end
