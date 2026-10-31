@@ -8,6 +8,14 @@ Frontend: [browsewrapped-web](https://github.com/MeghaKoshti/browsewrapped-web)
 
 **Live:** web app [browsewrapped.vercel.app](https://browsewrapped.vercel.app) · API [browsewrapped-api.onrender.com](https://browsewrapped-api.onrender.com) ([sample report](https://browsewrapped-api.onrender.com/api/v1/sample)). The API is on a free plan that sleeps after 15 minutes idle, so the first request can take up to a minute.
 
+**Also in the API:**
+
+- **Delete now:** every upload returns a one-time `delete_token`; `DELETE /api/v1/analyses/:id` removes the report straight away ([Privacy](#privacy)).
+- **Rich link previews:** shares can carry the persona card PNG, and `/s/:token` serves Open Graph tags for WhatsApp, X and LinkedIn ([Shareable reports](#shareable-reports)).
+- **Wrapped Pass:** a one-time Pass sold through Dodo Payments behind a provider interface, with verified, exactly-once webhooks and a fake provider for local work ([Billing](#billing-wrapped-pass)).
+- **Passwordless sign-in:** single-use magic links restore a Pass on any device ([Pass sign-in](#pass-sign-in-magic-links)).
+- **Owner admin and AI cost cap:** `/admin` behind HTTP Basic, and a hard daily ceiling on domains sent to the LLM ([Admin](#admin)).
+
 ![BrowseWrapped results page](https://raw.githubusercontent.com/MeghaKoshti/browsewrapped-web/main/docs/screenshots/wrapped.jpg)
 
 ## How it works
@@ -258,6 +266,10 @@ What the server keeps, and for how long:
 | The report (`analyses.result`) | PostgreSQL | **7 days**, or until you call `DELETE /api/v1/analyses/:id` with the delete token. It includes your top 15 pages (URLs and titles), up to 30 search queries, your Chrome searches and top domains, plus the aggregated charts. Anyone with the analysis id can read it, so the id is never shown in share links |
 | A shared report | PostgreSQL | 30 days, or until deleted with its delete token. Aggregates only (see `ReportSanitizer`) |
 | Domain names the rules couldn't place | Sent to Gemini; the answer is cached in `domain_categories` | The cache is kept; it holds domain names and categories, nothing tied to a person |
+| A share's persona card (PNG, ≤ 300 KB) | PostgreSQL (`share_cards`) | Deleted with its share |
+| A Pass purchase: email, plan, amount, currency, the provider's payment id, valid-until date | PostgreSQL (`purchases`) | Kept; there is no automatic deletion yet (decide a retention period before launch) |
+| Billing webhook ids | PostgreSQL (`billing_events`) | Event id, type and payment id only, never the payload. Kept, to ignore repeats |
+| Sign-in links | PostgreSQL (`magic_link_tokens`): email and SHA-256 digest of the token | 15 minutes, then deleted by a daily job |
 
 - Request logs filter `report`, `email`, tokens and secrets (`config/initializers/filter_parameter_logging.rb`); a test checks that a posted report shows up as `[FILTERED]`.
 - Delete tokens and share tokens are random; only SHA-256 digests of delete tokens are stored.
@@ -295,6 +307,21 @@ curl -X POST localhost:3000/api/v1/checkouts -H 'Content-Type: application/json'
 
 Going live with Dodo: create the "Wrapped Pass" product in USD and INR, a discount code for the early-bird price, and a webhook endpoint pointing at `https://<api>/api/v1/webhooks/billing` with the `payment.succeeded` and `refund.succeeded` events.
 
+Billing settings (full list in the [env table](#deploy-flyio)):
+
+| Env var | Default | Purpose |
+| --- | --- | --- |
+| `BILLING_PROVIDER` | `dodo` in production, `fake` elsewhere | Which adapter to use. `fake` is refused in production |
+| `DODO_API_KEY`, `DODO_ENVIRONMENT` | none, `test_mode` | Dodo API key and mode (`test_mode` or `live_mode`) |
+| `DODO_WEBHOOK_SECRET` | none | The webhook endpoint's `whsec_…` secret |
+| `DODO_PRODUCT_PASS_USD`, `DODO_PRODUCT_PASS_INR` | none | Product ids of the Pass in each currency |
+| `EARLY_BIRD_UNTIL` | `2026-12-15T23:59:59Z` | End of the early-bird price; `off` turns it off |
+| `DODO_EARLY_BIRD_DISCOUNT_CODE` | none | Discount code that brings the Dodo price down to the early-bird amount. Needed while the early bird runs: checkout refuses to start without it rather than overcharge |
+| `WEB_URL` | `http://localhost:5173` | Where checkout returns (`/billing/success`, `/billing/cancel`) and sign-in links point |
+| `API_PUBLIC_URL` | `http://localhost:3000` | This API's public address (fake checkout URL, share `preview_url`) |
+
+To check the whole flow locally, run the API and [browsewrapped-web](https://github.com/MeghaKoshti/browsewrapped-web#3-try-the-pass-locally) and buy a Pass on `http://localhost:5173/pricing` with the fake provider. To replay a webhook by hand, send the same body and `webhook-*` headers twice: the second answer is `{"received":true,"duplicate":true}` and the Pass is not extended again.
+
 ### Pass sign-in (magic links)
 
 No passwords: a Pass belongs to an email address, and any device can unlock it with a single-use emailed link.
@@ -312,11 +339,11 @@ No passwords: a Pass belongs to an email address, and any device can unlock it w
 - With the fake provider, the checkout's success redirect also carries `&token=…`, so the whole flow can be clicked through locally without email.
 - Pass-only endpoints use the `Entitlements` concern: `before_action :require_pass!` answers **402** `pass_required`.
 - The email is sent inline, not through a job, so the plain token never sits in job arguments (logs or Solid Queue tables). If sending fails, the answer is still 202 and the error is logged.
-- Preview the email at `http://localhost:3000/rails/mailers/pass_mailer/magic_link`. In development emails are written to `tmp/mails/<address>` instead of sent; in production they go over SMTP (see the env table).
+- Preview the email at `http://localhost:3000/rails/mailers/pass_mailer/magic_link`. In development emails are written to `tmp/mails/<address>` instead of sent; in production they go over SMTP: set `SMTP_ADDRESS`, `SMTP_PORT` (default 587, STARTTLS), `SMTP_USERNAME`, `SMTP_PASSWORD` and `MAIL_FROM` (a sender on a domain with SPF and DKIM).
 
 ## Admin
 
-A small owner-only page at `/admin`, behind HTTP Basic auth from `ADMIN_USER` and `ADMIN_PASSWORD`. If either is unset, `/admin` returns **404**.
+A small owner-only page at `/admin`, behind HTTP Basic auth from `ADMIN_USER` and `ADMIN_PASSWORD`. If either is unset, `/admin` returns **404**; wrong or missing credentials get **401**.
 
 - **Today (UTC):** analyses by status, shares created, Pass sales by currency, and LLM domains used against `AI_DAILY_DOMAIN_BUDGET`.
 - **Failures** in the last 7 days, grouped by `error_message`.
@@ -418,6 +445,23 @@ fly secrets set SECRET_KEY_BASE=$(bin/rails secret) \
   CORS_ORIGINS=https://<your-web-app>.vercel.app \
   GEMINI_API_KEY=<optional>
 
+# Public addresses (checkout returns, sign-in links, share previews)
+fly secrets set WEB_URL=https://<your-web-app>.vercel.app \
+  API_PUBLIC_URL=https://browsewrapped-api-<you>.fly.dev
+
+# Wrapped Pass payments (Dodo test mode first; switch DODO_ENVIRONMENT=live_mode when ready)
+fly secrets set DODO_API_KEY=<key> DODO_ENVIRONMENT=test_mode \
+  DODO_WEBHOOK_SECRET=whsec_<...> \
+  DODO_PRODUCT_PASS_USD=<product id> DODO_PRODUCT_PASS_INR=<product id> \
+  EARLY_BIRD_UNTIL=2026-12-15T23:59:59Z DODO_EARLY_BIRD_DISCOUNT_CODE=<code>
+
+# Sign-in emails (any transactional provider's SMTP)
+fly secrets set SMTP_ADDRESS=<host> SMTP_PORT=587 SMTP_USERNAME=<user> SMTP_PASSWORD=<password> \
+  MAIL_FROM="BrowseWrapped <hello@yourdomain>"
+
+# Owner admin and LLM spend cap
+fly secrets set ADMIN_USER=<you> ADMIN_PASSWORD=$(openssl rand -hex 24) AI_DAILY_DOMAIN_BUDGET=2000
+
 # Optional: tune the rate limits
 fly secrets set UPLOAD_RATE_LIMIT_PER_MINUTE=10 SHARE_RATE_LIMIT_PER_MINUTE=20
 
@@ -428,6 +472,10 @@ curl https://browsewrapped-api-<you>.fly.dev/api/v1/sample
 ```
 
 Then point browsewrapped-web at `https://browsewrapped-api-<you>.fly.dev`. `fly logs` tails the logs and `fly ssh console -C "bin/rails console"` opens a console.
+
+After deploying, point the Dodo webhook at `https://browsewrapped-api-<you>.fly.dev/api/v1/webhooks/billing` and buy a Pass in test mode from the live site before switching to `live_mode`.
+
+> **Web hosting and selling:** the web app's Vercel **Hobby** plan is **non-commercial only**. Before you sell the Pass, upgrade the Vercel project to Pro, or serve the web build from Fly (see the [web README's deploy section](https://github.com/MeghaKoshti/browsewrapped-web#deploy)).
 
 What `fly.toml` sets up:
 
@@ -481,7 +529,7 @@ curl http://localhost:3000/up
 
 ## Project status
 
-🚀 Live on Render's free plan with a Neon database (see [Deploy](#deploy-render--neon-free)). Next up: Wrapped Pass sign-in, share previews and the AI cost cap (in review).
+🚀 Live on Render's free plan with a Neon database (see [Deploy](#deploy-render--neon-free)). Sprint 3 added delete-now, link previews, the Wrapped Pass with Dodo billing, magic-link sign-in, the owner admin and the LLM spend cap. Next: merging several history files, saved reports with comparisons, and permanent shares for Pass holders.
 
 ## Author
 
