@@ -55,18 +55,17 @@ class ChromeHistoryReader
     end.select { |f| File.exist?(f) }
   end
 
-  private
-
   def self.read_file(path)
     tmp = File.join(Dir.tmpdir, "bwrapped_#{SecureRandom.hex(6)}.db")
     copy_db(path, tmp)
-    entries  = query_entries(tmp)
-    searches = query_keyword_searches(tmp)
-    { entries: entries, searches: searches }
+    db = SQLite3::Database.new(tmp, readonly: true)
+    db.busy_timeout = 2000
+    { entries: query_entries(db), searches: query_keyword_searches(db) }
   rescue => e
     Rails.logger.warn("ChromeHistoryReader: skipping #{path} — #{e.message}")
     { entries: [], searches: [] }
   ensure
+    db&.close
     cleanup(tmp)
   end
 
@@ -78,13 +77,13 @@ class ChromeHistoryReader
     raise "Cannot read Chrome history file (permission denied): #{e.message}"
   end
 
+  # Takes an open History database; also used for uploaded History files
+  # (see SqliteHistoryReader).
+  #
   # Column order:
   # 0=url 1=title 2=typed_count 3=visit_time 4=visit_duration
   # 5=transition 6=visit_id 7=fg_duration (from context_annotations, may be 0)
-  def self.query_entries(db_path)
-    db = SQLite3::Database.new(db_path, { readonly: true })
-    db.busy_timeout = 2000
-
+  def self.query_entries(db)
     # LEFT JOIN context_annotations for total_foreground_duration (actual foreground time)
     has_ca = db.execute(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='context_annotations'"
@@ -115,14 +114,9 @@ class ChromeHistoryReader
     end
 
     db.execute(sql).filter_map { |row| parse_row(row) }
-  ensure
-    db&.close
   end
 
-  def self.query_keyword_searches(db_path)
-    db = SQLite3::Database.new(db_path, { readonly: true })
-    db.busy_timeout = 2000
-
+  def self.query_keyword_searches(db)
     has_table = db.execute(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='keyword_search_terms'"
     ).flatten.any?
@@ -144,8 +138,6 @@ class ChromeHistoryReader
   rescue => e
     Rails.logger.warn("ChromeHistoryReader: keyword_search_terms error — #{e.message}")
     []
-  ensure
-    db&.close
   end
 
   def self.parse_row(row)

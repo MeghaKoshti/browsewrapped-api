@@ -1,0 +1,14 @@
+<% content_for :title, "Fake checkout" %>
+<div class="card warn">
+  <strong>Fake checkout.</strong> Development and tests only. No money moves.
+</div>
+<div class="card">
+  <h1>Wrapped Pass</h1>
+  <p><%= number_to_currency(@checkout["amount"] / 100.0, unit: @checkout["currency"] == "INR" ? "₹" : "$") %>
+     <span class="muted"><%= @checkout["currency"] %>, one-time, <%= Billing::Pricing::VALID_DAYS %> days</span></p>
+  <p class="muted">For <%= @checkout["email"] %></p>
+  <div style="display:flex; gap:8px; flex-wrap:wrap">
+    <%= button_to "Pay (fake)", api_fake_checkout_pay_path(params[:id]), class: "primary", form: { style: "margin:0" } %>
+    <%= button_to "Cancel", api_fake_checkout_cancel_path(params[:id]), form: { style: "margin:0" } %>
+  </div>
+</div>

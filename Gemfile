@@ -29,7 +29,8 @@ gem "thruster", require: false
 
 # Use Rack CORS for handling Cross-Origin Resource Sharing (CORS), making cross-origin Ajax possible
 gem "rack-cors"
-gem "sqlite3", "~> 2.0"
+# 2.10 fixes statement_timeout interrupting queries almost immediately.
+gem "sqlite3", "~> 2.10"
 gem "csv"
 
 group :development, :test do

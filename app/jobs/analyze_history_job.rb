@@ -7,19 +7,22 @@ class AnalyzeHistoryJob < ApplicationJob
 
   NO_ENTRIES_MESSAGE = "No valid browser history entries found in the file".freeze
 
-  def perform(analysis_id)
+  # The upload request waits for a sync run, so the LLM gets at most this long.
+  SYNC_AI_BUDGET_SECONDS = 5
+
+  def perform(analysis_id, sync: false)
     analysis = Analysis.find_by(id: analysis_id)
     return if analysis.nil? || analysis.finished?
 
     analysis.update!(status: :processing)
-    entries = HistoryParser.parse(AnalysisUpload.read(analysis.id))
+    entries = HistoryParser.parse_file(AnalysisUpload.path_for(analysis.id))
 
     if entries.empty?
       analysis.update!(status: :failed, error_message: NO_ENTRIES_MESSAGE)
       return
     end
 
-    ai     = AiDomainCategorizer.new(entries).call
+    ai     = AiDomainCategorizer.new(entries, time_budget: (SYNC_AI_BUDGET_SECONDS if sync)).call
     result = HistoryAnalyzer.new(entries, domain_overrides: ai.overrides).analyze
     result[:meta] = {
       total_entries_parsed:  entries.size,

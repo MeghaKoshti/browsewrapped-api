@@ -4,9 +4,6 @@ class CleanupOldAnalysesJob < ApplicationJob
   queue_as :default
 
   def perform
-    Analysis.expired.find_each do |analysis|
-      AnalysisUpload.delete(analysis.id)
-      analysis.destroy
-    end
+    Analysis.expired.find_each(&:purge!)
   end
 end

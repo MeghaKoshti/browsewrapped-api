@@ -84,6 +84,21 @@ test:
 # Read https://guides.rubyonrails.org/configuring.html#configuring-a-database
 # for a full overview on how database connection configuration can be specified.
 #
+<%
+  # Fly.io (and most hosts) only set DATABASE_URL. The cache, queue and cable
+  # databases then live on the same server, named after the primary one with
+  # a suffix (myapp_cache, myapp_queue, myapp_cable); `db:prepare` creates
+  # them. Set CACHE_DATABASE_URL, QUEUE_DATABASE_URL or CABLE_DATABASE_URL to
+  # point one somewhere else.
+  sibling_url = lambda do |name|
+    explicit = ENV["#{name.upcase}_DATABASE_URL"].presence
+    next explicit if explicit || ENV["DATABASE_URL"].blank?
+
+    uri = URI.parse(ENV["DATABASE_URL"])
+    uri.path = "#{uri.path}_#{name}"
+    uri.to_s
+  end
+%>
 production:
   primary: &primary_production
     <<: *default
@@ -93,12 +108,15 @@ production:
   cache:
     <<: *primary_production
     database: browser_history_visualizer_api_production_cache
+    url: <%= sibling_url.call("cache") %>
     migrations_paths: db/cache_migrate
   queue:
     <<: *primary_production
     database: browser_history_visualizer_api_production_queue
+    url: <%= sibling_url.call("queue") %>
     migrations_paths: db/queue_migrate
   cable:
     <<: *primary_production
     database: browser_history_visualizer_api_production_cable
+    url: <%= sibling_url.call("cable") %>
     migrations_paths: db/cable_migrate

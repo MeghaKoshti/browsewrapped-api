@@ -40,5 +40,9 @@ module BrowserHistoryVisualizerApi
     # Middleware like session, flash, cookies can be added back manually.
     # Skip views, helpers and assets when generating a new resource.
     config.api_only = true
+
+    # API-only apps leave this out, so Rack's temp copies of uploaded history
+    # files stayed on disk until garbage collection. Delete them after each request.
+    config.middleware.use Rack::TempfileReaper
   end
 end

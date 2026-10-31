@@ -40,6 +40,7 @@ class SharedReportsTest < ActionDispatch::IntegrationTest
     assert_response :success
     body = response.parsed_body
     assert body["report"].key?("persona")
+    assert_equal 30, body.dig("report", "period_comparison", "window_days")
     assert_not body["report"].key?("top_pages")
     assert_not body["report"].key?("top_searches")
     assert_not body.key?("delete_token")
@@ -62,6 +63,7 @@ class SharedReportsTest < ActionDispatch::IntegrationTest
     delete "/api/v1/shared_reports/#{body["token"]}", headers: { "X-Delete-Token" => "nope" }
 
     assert_response :forbidden
+    assert_equal "invalid_delete_token", response.parsed_body.dig("error", "code")
     assert SharedReport.exists?(token: body["token"])
   end
 
@@ -69,6 +71,8 @@ class SharedReportsTest < ActionDispatch::IntegrationTest
     get "/api/v1/shared_reports/doesnotexist"
 
     assert_response :not_found
+    assert_equal({ "code" => "not_found", "message" => "This shared report doesn't exist or has expired" },
+                 response.parsed_body["error"])
   end
 
   test "expired links return 404" do
@@ -84,11 +88,39 @@ class SharedReportsTest < ActionDispatch::IntegrationTest
     share!({})
 
     assert_response :unprocessable_entity
+    assert_equal({ "code" => "nothing_to_share", "message" => "Nothing to share" }, response.parsed_body["error"])
+    assert_equal "Nothing to share", response.parsed_body["error_message"]
   end
 
   test "sharing an analysis that is not completed returns 422" do
     share!(analysis_id: Analysis.create!.id)
 
     assert_response :unprocessable_entity
+  end
+
+  test "a malformed JSON body returns 400 in the standard error shape" do
+    post "/api/v1/shared_reports", params: "{not json", headers: { "Content-Type" => "application/json" }
+
+    assert_response :bad_request
+    assert_equal "bad_request", response.parsed_body.dig("error", "code")
+  end
+
+  test "creating share links is rate limited per IP" do
+    ApplicationController::SHARE_RATE_LIMIT.times { share!({}) }
+    assert_response :unprocessable_entity
+
+    body = share!
+
+    assert_response :too_many_requests
+    assert_equal "rate_limited", body.dig("error", "code")
+    assert_equal "60", response.headers["Retry-After"]
+  end
+
+  test "viewing shared reports is not rate limited" do
+    token = share!["token"]
+
+    (ApplicationController::SHARE_RATE_LIMIT + 1).times { get "/api/v1/shared_reports/#{token}" }
+
+    assert_response :success
   end
 end

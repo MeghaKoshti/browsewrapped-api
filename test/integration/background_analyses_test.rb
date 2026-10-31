@@ -61,7 +61,8 @@ class BackgroundAnalysesTest < ActionDispatch::IntegrationTest
   end
 
   test "a failed analysis reports its error message" do
-    file = Rack::Test::UploadedFile.new(StringIO.new("just some text"), "text/plain", original_filename: "notes.txt")
+    # Looks like CSV, so it gets past the upload checks, but has no url column.
+    file = Rack::Test::UploadedFile.new(StringIO.new("name,age\nbob,3\n"), "text/csv", original_filename: "people.csv")
     post "/api/v1/analyses", params: { file: file }
 
     assert_response :created
@@ -75,12 +76,29 @@ class BackgroundAnalysesTest < ActionDispatch::IntegrationTest
     post "/api/v1/analyses"
 
     assert_response :unprocessable_entity
-    assert_equal "No file provided", response.parsed_body["error"]
+    assert_equal "missing_file", response.parsed_body.dig("error", "code")
   end
 
   test "GET /api/v1/analyses/:id for an unknown id returns 404" do
     get "/api/v1/analyses/#{SecureRandom.uuid}"
 
     assert_response :not_found
+    assert_equal({ "code" => "not_found", "message" => "Analysis not found" }, response.parsed_body["error"])
+    assert_equal "Analysis not found", response.parsed_body["error_message"]
+  end
+
+  test "GET /api/v1/analyses/:id with a malformed id returns 404" do
+    get "/api/v1/analyses/not-a-uuid"
+
+    assert_response :not_found
+    assert_equal "not_found", response.parsed_body.dig("error", "code")
+  end
+
+  test "POST /api/v1/analyses with binary content returns 415 and stores nothing" do
+    file = Rack::Test::UploadedFile.new(StringIO.new("%PDF-1.7\n%\xE2\xE3".b), "application/json", original_filename: "history.json")
+
+    assert_no_difference("Analysis.count") { post "/api/v1/analyses", params: { file: file } }
+
+    assert_response :unsupported_media_type
   end
 end

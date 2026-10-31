@@ -4,6 +4,8 @@
 # - delete token: shown once at creation; only its SHA-256 digest is stored
 # - expires after 30 days (CleanupExpiredSharedReportsJob deletes old rows)
 class SharedReport < ApplicationRecord
+  include DeleteToken
+
   TTL = 30.days
   MAX_DATA_BYTES = 512.kilobytes
 
@@ -17,25 +19,10 @@ class SharedReport < ApplicationRecord
 
   before_validation { self.expires_at ||= TTL.from_now }
 
-  attr_reader :delete_token
-
   # Builds a shared report from a full analysis result. The plain delete token
   # is only available on this instance (#delete_token), never stored.
   def self.build_from_report(report)
     new(data: ReportSanitizer.call(report)).tap(&:assign_delete_token)
-  end
-
-  def self.digest(value)
-    OpenSSL::Digest::SHA256.hexdigest(value.to_s)
-  end
-
-  def assign_delete_token
-    @delete_token = SecureRandom.base58(32)
-    self.delete_token_digest = self.class.digest(@delete_token)
-  end
-
-  def deletable_with?(candidate)
-    candidate.present? && ActiveSupport::SecurityUtils.secure_compare(self.class.digest(candidate), delete_token_digest)
   end
 
   def expired?

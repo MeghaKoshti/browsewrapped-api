@@ -9,6 +9,14 @@ class HistoryParser
     new(content).parse
   end
 
+  # Parses an upload on disk. Browser history databases (SQLite) are read with
+  # SqliteHistoryReader; everything else is text for the JSON and CSV parsers.
+  def self.parse_file(path)
+    return SqliteHistoryReader.read(path) if SqliteHistoryReader.sqlite?(path)
+
+    parse(File.read(path))
+  end
+
   def initialize(content)
     @content = content.dup.force_encoding("UTF-8").encode("UTF-8", invalid: :replace, undef: :replace, replace: "")
   end
@@ -105,7 +113,9 @@ class HistoryParser
     return Time.at(s.to_i / 1000.0).utc if s =~ /^\d{13}$/
     # 10-digit seconds
     return Time.at(s.to_i).utc if s =~ /^\d{10}$/
-    Time.parse(s).utc
+    # Exports without an offset are read as UTC, like the epoch formats above,
+    # so the result never depends on the server's local time zone.
+    Time.find_zone!("UTC").parse(s)&.utc
   rescue
     nil
   end

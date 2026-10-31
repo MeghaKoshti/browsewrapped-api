@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><%= content_for(:title) || "BrowseWrapped" %></title>
+  <%= yield :head %>
+  <style>
+    body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 24px 16px; background: #f7f7fb; color: #1d1d29; }
+    main { max-width: 960px; margin: 0 auto; }
+    .card { background: #fff; border: 1px solid #e3e3ee; border-radius: 12px; padding: 24px; margin-bottom: 16px; }
+    button { font: inherit; padding: 10px 18px; border-radius: 8px; border: 1px solid #c9c9d9; background: #fff; cursor: pointer; }
+    button.primary { background: #5b3df5; border-color: #5b3df5; color: #fff; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; }
+    .muted { color: #666; font-size: 14px; }
+    .warn { background: #fff4d6; border-color: #f0d68a; }
+  </style>
+</head>
+<body>
+  <main><%= yield %></main>
+</body>
+</html>

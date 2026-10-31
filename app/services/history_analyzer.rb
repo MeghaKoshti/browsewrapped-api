@@ -19,6 +19,11 @@ class HistoryAnalyzer
   SESSION_GAP_SECS     = 30 * 60
   MAX_PAGE_DURATION_US = 2 * 3_600_000_000  # cap at 2h per page
 
+  # Period comparison: needs two windows of at least a week each to be meaningful.
+  PERIOD_MIN_SPAN_DAYS   = 14
+  PERIOD_MAX_WINDOW_DAYS = 30
+  PERIOD_TOP_TOPICS      = 8
+
   PERSONAS = [
     { id: "builder",    title: "The Builder",
       test: ->(t, _) { t["Programming"].to_f + t["Cloud & DevOps"].to_f >= 25 },
@@ -79,6 +84,7 @@ class HistoryAnalyzer
       sessions:         sessions_data,
       streaks:          build_streaks,
       topic_momentum:   build_topic_momentum,
+      period_comparison: build_period_comparison,
       top_domains:      build_top_domains,
       top_pages:        build_top_pages,
       top_searches:     build_top_searches,
@@ -124,13 +130,29 @@ class HistoryAnalyzer
       return { total_sessions: 0, avg_duration_minutes: 0, longest_session_minutes: 0, total_hours_browsed: 0 }
     end
 
-    sorted = timed.sort_by { |e| e[:visited_at] }
+    sessions = group_into_sessions(timed)
+    durations_min = session_durations_min(sessions)
+    total_min = durations_min.sum
+
+    {
+      total_sessions:          sessions.size,
+      avg_duration_minutes:    durations_min.any? ? (total_min / durations_min.size).round(1) : 0,
+      longest_session_minutes: durations_min.max&.round(1) || 0,
+      total_hours_browsed:     (total_min / 60.0).round(1)
+    }
+  end
+
+  def group_into_sessions(entries)
+    sorted = entries.sort_by { |e| e[:visited_at] }
     sessions = [ [ sorted.first ] ]
     sorted.each_cons(2) do |a, b|
       (b[:visited_at] - a[:visited_at]).abs > SESSION_GAP_SECS ? (sessions << [ b ]) : (sessions.last << b)
     end
+    sessions
+  end
 
-    durations_min = sessions.map do |s|
+  def session_durations_min(sessions)
+    sessions.map do |s|
       if s.size == 1
         dur = s[0][:effective_duration].to_i / 60_000_000.0
         dur > 0.1 ? dur : 0.0
@@ -140,15 +162,13 @@ class HistoryAnalyzer
         span + last_dur
       end
     end.select { |d| d > 0 }
+  end
 
-    total_min = durations_min.sum
+  # Same session-based estimate as summary.total_hours_browsed, for any subset of visits.
+  def estimated_hours(entries)
+    return 0.0 if entries.empty?
 
-    {
-      total_sessions:          sessions.size,
-      avg_duration_minutes:    durations_min.any? ? (total_min / durations_min.size).round(1) : 0,
-      longest_session_minutes: durations_min.max&.round(1) || 0,
-      total_hours_browsed:     (total_min / 60.0).round(1)
-    }
+    (session_durations_min(group_into_sessions(entries)).sum / 60.0).round(1)
   end
 
   # ─── Topics (memoized) ───────────────────────────────────────────────────
@@ -434,6 +454,73 @@ class HistoryAnalyzer
     }
   end
 
+  # ─── Period comparison (last N days vs the N days before) ────────────────
+
+  def build_period_comparison
+    return nil unless has_timestamps?
+
+    dates = timed.map { |e| e[:visited_at].to_date }
+    return nil if dates.empty?
+
+    span_days = (dates.max - dates.min + 1).to_i
+    return nil if span_days < PERIOD_MIN_SPAN_DAYS
+
+    window   = [ PERIOD_MAX_WINDOW_DAYS, span_days / 2 ].min
+    current  = (dates.max - window + 1)..dates.max
+    previous = (current.begin - window)..(current.begin - 1)
+
+    current_entries  = timed.select { |e| current.cover?(e[:visited_at].to_date) }
+    previous_entries = timed.select { |e| previous.cover?(e[:visited_at].to_date) }
+    cur  = period_stats(current_entries, current, "Last #{window} days")
+    prev = period_stats(previous_entries, previous, "Previous #{window} days")
+
+    {
+      window_days: window,
+      current:     cur,
+      previous:    prev,
+      changes: {
+        visits_pct:        pct_change(cur[:visits], prev[:visits]),
+        active_days_delta: cur[:active_days] - prev[:active_days],
+        hours_pct:         pct_change(cur[:hours], prev[:hours])
+      },
+      topics: period_topic_changes(current_entries, previous_entries)
+    }
+  end
+
+  def period_stats(entries, range, label)
+    {
+      label:       label,
+      from:        range.begin.iso8601,
+      to:          range.end.iso8601,
+      visits:      entries.sum { |e| e[:visit_count] },
+      active_days: entries.map { |e| e[:visited_at].to_date }.uniq.size,
+      hours:       estimated_hours(entries),
+      top_topic:   visits_by_topic(entries).except("Search").max_by { |_, v| v }&.first
+    }
+  end
+
+  def period_topic_changes(current_entries, previous_entries)
+    cur  = visits_by_topic(current_entries)
+    prev = visits_by_topic(previous_entries)
+
+    (cur.keys | prev.keys)
+      .sort_by { |t| [ -(cur[t] + prev[t]), t ] }
+      .first(PERIOD_TOP_TOPICS)
+      .sort_by { |t| [ -cur[t], t ] }
+      .map { |t| { topic: t, current: cur[t], previous: prev[t], change_pct: pct_change(cur[t], prev[t]) } }
+  end
+
+  def visits_by_topic(entries)
+    entries.each_with_object(Hash.new(0)) { |e, counts| counts[e[:topic]] += e[:visit_count] }
+  end
+
+  # nil when there is nothing to compare against (a jump from 0 has no meaningful %).
+  def pct_change(current, previous)
+    return nil if previous.to_f.zero?
+
+    ((current - previous) / previous.to_f * 100).round(1)
+  end
+
   # ─── Top domains ─────────────────────────────────────────────────────────
 
   def build_top_domains
@@ -602,6 +689,7 @@ class HistoryAnalyzer
       sessions:         { total_sessions: 0, avg_duration_minutes: 0, longest_session_minutes: 0, total_hours_browsed: 0 },
       streaks:          { current: 0, longest: 0, total_active_days: 0 },
       topic_momentum:   { rising: [], falling: [] },
+      period_comparison: nil,
       top_domains:      [],
       top_pages:        [],
       top_searches:     [],

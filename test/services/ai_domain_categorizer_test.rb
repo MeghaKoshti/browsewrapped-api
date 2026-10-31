@@ -105,4 +105,25 @@ class AiDomainCategorizerTest < ActiveSupport::TestCase
     assert_equal "Design", topics["tailwindcss.com"]
     assert_equal "Programming", topics["github.com"]
   end
+
+  test "never sends IP addresses, localhost or intranet hosts" do
+    private_entries = %w[
+      http://192.168.1.10/admin http://[::1]:3000/ http://localhost:3000/ http://wiki/home
+      https://nas.local/ https://build.internal/ https://jira.corp/ https://printer.lan/x
+    ].map { |url| entry(url, visit_count: 50) }
+    fake = FakeClassifier.new
+
+    AiDomainCategorizer.new(private_entries + entries, classifier: fake).call
+
+    assert_equal [ %w[modelcontextprotocol.io tailwindcss.com plinkerton.xyz] ], fake.calls
+  end
+
+  test "private_host? spots private hosts and lets public domains through" do
+    %w[10.0.0.1 ::1 [::1] localhost intranet nas.local api.internal jira.corp router.lan].each do |host|
+      assert AiDomainCategorizer.private_host?(host), "#{host} should be private"
+    end
+    %w[example.com sub.example.co.in localcorp.com lan.dev].each do |host|
+      assert_not AiDomainCategorizer.private_host?(host), "#{host} should be public"
+    end
+  end
 end
