@@ -19,3 +19,6 @@ production:
   cleanup_expired_shared_reports:
     class: CleanupExpiredSharedReportsJob
     schedule: every day at 3:30am
+  cleanup_expired_magic_links:
+    command: "MagicLinkToken.expired.delete_all"
+    schedule: every day at 3:45am

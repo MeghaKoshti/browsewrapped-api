@@ -184,6 +184,8 @@ Per IP, using Rails 8's `rate_limit` with counters in Solid Cache (shared by all
 | `POST /api/v1/analyses` and `POST /api/v1/analyze` (one shared counter) | `UPLOAD_RATE_LIMIT_PER_MINUTE` | `10` per minute |
 | `POST /api/v1/shared_reports` | `SHARE_RATE_LIMIT_PER_MINUTE` | `20` per minute |
 | `POST /api/v1/checkouts` | `CHECKOUT_RATE_LIMIT_PER_MINUTE` | `10` per minute |
+| `POST /api/v1/sessions/magic_link` | `MAGIC_LINK_RATE_LIMIT_PER_MINUTE` | `5` per minute (plus 5 per hour per email address, silently) |
+| `POST /api/v1/sessions/verify` | – | `20` per minute |
 
 Reading endpoints (polling, sample, shared report views) are not limited.
 
@@ -203,7 +205,8 @@ Branch on `error.code`; `error.message` is safe to show users. `error_message` r
 | Status | Codes |
 | --- | --- |
 | 400 | `bad_request` (malformed JSON body, missing parameter), `invalid_payload` |
-| 401 | `invalid_signature` |
+| 401 | `invalid_signature`, `invalid_or_expired_token`, `unauthorized` |
+| 402 | `pass_required` |
 | 403 | `invalid_delete_token` |
 | 404 | `not_found`, `disabled` (local Chrome import switched off) |
 | 413 | `payload_too_large` |
@@ -284,6 +287,24 @@ curl -X POST localhost:3000/api/v1/checkouts -H 'Content-Type: application/json'
 ```
 
 Going live with Dodo: create the "Wrapped Pass" product in USD and INR, a discount code for the early-bird price, and a webhook endpoint pointing at `https://<api>/api/v1/webhooks/billing` with the `payment.succeeded` and `refund.succeeded` events.
+
+### Pass sign-in (magic links)
+
+No passwords: a Pass belongs to an email address, and any device can unlock it with a single-use emailed link.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| `POST` | `/api/v1/sessions/magic_link` | `{ email }` → **202, always**, whatever the address (no account enumeration). Emails `${WEB_URL}/auth/verify?token=…`, valid **15 minutes, once** |
+| `POST` | `/api/v1/sessions/verify` | `{ token }` → **200** `{ access_token, email, pass_valid_until }`; **401** `invalid_or_expired_token`. POST so tokens stay out of access logs |
+| `GET` | `/api/v1/me` | `Authorization: Bearer <access_token>` → `{ email, pass_valid_until, has_pass }`; **401** `unauthorized` |
+
+- Only the SHA-256 digest of a link token is stored, and redeeming it is one conditional `UPDATE`, so a link can't be used twice even by two requests at once. Expired tokens are deleted daily.
+- The access token is signed with `Rails.application.message_verifier(:pass_session)` and expires after 30 days. It holds only the email; the Pass is looked up on every request, so a refund takes effect immediately.
+- A link is sent to any valid address, Pass or not. The success page asks for one straight after paying, maybe before the payment webhook has arrived, and then polls `/me` until `has_pass` is true.
+- Rate limits: 5 requests per minute per IP (then **429**), and 5 emails per hour per address (further requests still get the same 202, but nothing is sent).
+- With the fake provider, the checkout's success redirect also carries `&token=…`, so the whole flow can be clicked through locally without email.
+- Pass-only endpoints use the `Entitlements` concern: `before_action :require_pass!` answers **402** `pass_required`.
+- Preview the email at `http://localhost:3000/rails/mailers/pass_mailer/magic_link`. In development emails aren't sent; in production they go over SMTP (see the env table).
 
 ## Tech stack
 
@@ -417,6 +438,9 @@ What `fly.toml` sets up:
 | `DODO_EARLY_BIRD_DISCOUNT_CODE` | `fly secrets set` | while the early bird runs | Dodo discount code that brings the price down to the early-bird amount. Checkout refuses to start without it rather than overcharge |
 | `EARLY_BIRD_UNTIL` | `fly secrets set` | no | ISO 8601 end of the early-bird price (default `2026-12-15T23:59:59Z`); `off` disables it |
 | `CHECKOUT_RATE_LIMIT_PER_MINUTE` | `fly secrets set` | no | Per-IP limit for `POST /api/v1/checkouts` (default 10) |
+| `SMTP_ADDRESS`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD` | `fly secrets set` | yes, for sign-in emails | Any transactional email provider's SMTP settings (port defaults to 587, STARTTLS) |
+| `MAIL_FROM` | `fly secrets set` | yes, for sign-in emails | e.g. `BrowseWrapped <hello@yourdomain>`; the domain needs SPF and DKIM |
+| `MAGIC_LINK_RATE_LIMIT_PER_MINUTE`, `MAGIC_LINK_EMAIL_LIMIT_PER_HOUR` | `fly secrets set` | no | Magic-link limits per IP (default 5/min) and per address (default 5/hour) |
 | `UPLOAD_RATE_LIMIT_PER_MINUTE`, `SHARE_RATE_LIMIT_PER_MINUTE` | `fly secrets set` | no | Per-IP rate limits (defaults 10 and 20) |
 | `ANALYSIS_SYNC_THRESHOLD_BYTES`, `ANALYSIS_MAX_UPLOAD_BYTES` | `fly secrets set` | no | Inline vs background threshold (5 MB) and upload limit (100 MB) |
 | `CACHE_DATABASE_URL`, `QUEUE_DATABASE_URL`, `CABLE_DATABASE_URL` | `fly secrets set` | no | Override the derived database URLs |

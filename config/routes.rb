@@ -14,6 +14,11 @@ Rails.application.routes.draw do
       get  "pricing", to: "pricing#show"
       resources :checkouts, only: :create
       post "webhooks/billing", to: "billing_webhooks#create"
+
+      # Pass holders: magic-link sign-in
+      post "sessions/magic_link", to: "sessions#magic_link"
+      post "sessions/verify",     to: "sessions#verify"
+      get  "me",                  to: "me#show"
     end
 
     # Billing::FakeProvider's checkout page (404 in production).
