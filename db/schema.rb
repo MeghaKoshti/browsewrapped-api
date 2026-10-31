@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_24_100000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_24_110000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -28,6 +28,16 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_24_100000) do
     t.index ["status"], name: "index_analyses_on_status"
   end
 
+  create_table "billing_events", force: :cascade do |t|
+    t.string "provider", null: false
+    t.string "provider_event_id", null: false
+    t.string "event_type", null: false
+    t.string "payment_ref"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["provider", "provider_event_id"], name: "index_billing_events_on_provider_and_provider_event_id", unique: true
+  end
+
   create_table "domain_categories", force: :cascade do |t|
     t.string "domain", null: false
     t.string "category", null: false
@@ -36,6 +46,21 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_24_100000) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["domain"], name: "index_domain_categories_on_domain", unique: true
+  end
+
+  create_table "purchases", force: :cascade do |t|
+    t.string "email", null: false
+    t.string "plan", null: false
+    t.integer "amount", null: false
+    t.string "currency", null: false
+    t.string "provider", null: false
+    t.string "provider_ref", null: false
+    t.datetime "valid_until", null: false
+    t.datetime "revoked_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["email", "valid_until"], name: "index_purchases_on_email_and_valid_until"
+    t.index ["provider", "provider_ref"], name: "index_purchases_on_provider_and_provider_ref", unique: true
   end
 
   create_table "shared_reports", force: :cascade do |t|

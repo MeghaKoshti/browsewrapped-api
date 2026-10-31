@@ -7,6 +7,7 @@ class ApplicationController < ActionController::API
   RATE_LIMIT_WINDOW = 1.minute
   UPLOAD_RATE_LIMIT = ENV.fetch("UPLOAD_RATE_LIMIT_PER_MINUTE", 10).to_i
   SHARE_RATE_LIMIT  = ENV.fetch("SHARE_RATE_LIMIT_PER_MINUTE", 20).to_i
+  CHECKOUT_RATE_LIMIT = ENV.fetch("CHECKOUT_RATE_LIMIT_PER_MINUTE", 10).to_i
 
   # Tests set their own store. An unset config.x key is an empty (but truthy)
   # OrderedOptions, hence presence rather than ||.
