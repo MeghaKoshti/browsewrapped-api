@@ -10,7 +10,7 @@
       <span class="muted">(<%= @analyses_by_status.map { |status, count| "#{status}: #{count}" }.join(", ").presence || "none" %>)</span></td></tr>
     <tr><th>Shares created</th><td><%= @shares_today %> <span class="muted">(<%= @active_shares %> active)</span></td></tr>
     <tr><th>Pass sales</th><td><%= @sales_count_today %>
-      <span class="muted">(<%= @sales_today.map { |currency, amount| "#{currency} #{format("%.2f", amount / 100.0)}" }.join(", ").presence || "none" %>; <%= @active_passes %> active passes)</span></td></tr>
+      <span class="muted">(<%= @sales_today.map { |currency, amount| "#{currency} #{format("%.2f", amount / 100.0)}" }.join(", ").presence || "none" %>; <%= pluralize(@active_passes, "active pass") %>)</span></td></tr>
     <tr><th>LLM domains</th><td><%= @ai_used %> / <%= @ai_limit %></td></tr>
   </table>
 </div>

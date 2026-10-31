@@ -311,7 +311,8 @@ No passwords: a Pass belongs to an email address, and any device can unlock it w
 - Rate limits: 5 requests per minute per IP (then **429**), and 5 emails per hour per address (further requests still get the same 202, but nothing is sent).
 - With the fake provider, the checkout's success redirect also carries `&token=…`, so the whole flow can be clicked through locally without email.
 - Pass-only endpoints use the `Entitlements` concern: `before_action :require_pass!` answers **402** `pass_required`.
-- Preview the email at `http://localhost:3000/rails/mailers/pass_mailer/magic_link`. In development emails aren't sent; in production they go over SMTP (see the env table).
+- The email is sent inline, not through a job, so the plain token never sits in job arguments (logs or Solid Queue tables). If sending fails, the answer is still 202 and the error is logged.
+- Preview the email at `http://localhost:3000/rails/mailers/pass_mailer/magic_link`. In development emails are written to `tmp/mails/<address>` instead of sent; in production they go over SMTP (see the env table).
 
 ## Admin
 

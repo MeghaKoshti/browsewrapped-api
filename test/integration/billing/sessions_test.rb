@@ -2,6 +2,7 @@ require "test_helper"
 
 class SessionsTest < ActionDispatch::IntegrationTest
   include ActionMailer::TestHelper
+  include ActiveJob::TestHelper
   include BillingHelpers
 
   def request_link(email = "buyer@example.com")
@@ -34,6 +35,24 @@ class SessionsTest < ActionDispatch::IntegrationTest
     token = token_from_last_email
     assert_not MagicLinkToken.exists?(token_digest: token)
     assert MagicLinkToken.exists?(token_digest: MagicLinkToken.digest(token))
+  end
+
+  test "the token never goes through the job queue" do
+    assert_no_enqueued_jobs { request_link }
+
+    assert_equal 1, ActionMailer::Base.deliveries.size
+  end
+
+  test "an email failure still answers 202" do
+    original = ActionMailer::Base.delivery_method
+    ActionMailer::Base.delivery_method = :smtp
+    ActionMailer::Base.smtp_settings = { address: "127.0.0.1", port: 1, open_timeout: 1 }
+
+    request_link
+
+    assert_response :accepted
+  ensure
+    ActionMailer::Base.delivery_method = original
   end
 
   test "the response is the same for unknown, invalid and paying emails" do
@@ -94,7 +113,7 @@ class SessionsTest < ActionDispatch::IntegrationTest
       post "/api/v1/sessions/magic_link", params: { email: "victim@example.com" }, as: :json,
                                           headers: { "REMOTE_ADDR" => "10.0.0.#{i + 1}" }
     end
-    assert_enqueued_emails(0) do
+    assert_no_emails do
       post "/api/v1/sessions/magic_link", params: { email: "victim@example.com" }, as: :json, headers: { "REMOTE_ADDR" => "10.0.1.1" }
     end
 

@@ -19,10 +19,7 @@ module Api
       # and the web app then polls /me until has_pass turns true.
       def magic_link
         email = EmailAddress.normalize(params[:email])
-        if EmailAddress.valid?(email)
-          link = MagicLinkToken.issue!(email)
-          PassMailer.magic_link(email: email, token: link.token).deliver_later
-        end
+        send_link(email) if EmailAddress.valid?(email)
 
         render json: ACCEPTED, status: :accepted
       end
@@ -38,6 +35,17 @@ module Api
           email:            email,
           pass_valid_until: Purchase.pass_valid_until(email)&.iso8601
         }
+      end
+
+      private
+
+      # Sent inline, not with deliver_later: a queued job would keep the plain
+      # token in its arguments (job logs and the Solid Queue tables).
+      def send_link(email)
+        link = MagicLinkToken.issue!(email)
+        PassMailer.magic_link(email: email, token: link.token).deliver_now
+      rescue StandardError => e
+        Rails.logger.error("Magic link email failed: #{e.class}: #{e.message}")
       end
     end
   end
