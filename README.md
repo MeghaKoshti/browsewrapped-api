@@ -112,8 +112,10 @@ Tests use a stubbed classifier, so CI never calls the API.
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| `POST` | `/api/v1/shared_reports` | Body `{ analysis_id }` or `{ report }`. Returns **201** with `token`, `path` (`/r/:token`), `expires_at` and a one-time `delete_token` |
+| `POST` | `/api/v1/shared_reports` | Body `{ analysis_id }` or `{ report }`, as JSON, or as multipart form data with an optional `card` image (then `report` is a JSON string). Returns **201** with `token`, `path` (`/r/:token`), `preview_url`, `expires_at` and a one-time `delete_token` |
 | `GET` | `/api/v1/shared_reports/:token` | The read-only report; **404** when unknown or expired |
+| `GET` | `/api/v1/shared_reports/:token/card.png` | The persona card; **404** without one |
+| `GET` | `/s/:token` | Link-preview page (see below) |
 | `DELETE` | `/api/v1/shared_reports/:token` | Needs the `X-Delete-Token` header; **204**, or **403** for a wrong token |
 
 Privacy by design:
@@ -122,6 +124,10 @@ Privacy by design:
 - Tokens come from `has_secure_token` (24 random characters), never the sequential id.
 - The delete token is shown once; only its SHA-256 digest is saved.
 - Links expire after 30 days and `CleanupExpiredSharedReportsJob` removes them daily.
+
+**Link previews.** WhatsApp, X, LinkedIn and Slack don't run JavaScript, so the web app's `/r/:token` looks blank to them. The link people copy is `preview_url` (`${API_PUBLIC_URL}/s/:token`): a tiny server-rendered page with `og:title` (the persona), `og:description`, `og:image` (the card, or `OG_FALLBACK_IMAGE_URL`, default `${WEB_URL}/og-image.png`) and `twitter:card=summary_large_image`, which sends visitors straight on to `${WEB_URL}/r/:token`. Unknown or expired tokens get a **404** with generic tags and no redirect.
+
+The card is checked before anything is saved: PNG magic bytes and IHDR (the content type is ignored, **415** `unsupported_media_type` otherwise), at most 300 KB (**413** `payload_too_large`) and exactly 1200×630 (**422** `invalid_card_dimensions`). It is stored in Postgres (`share_cards`, `bytea`), so it survives machine restarts without a volume, and is deleted with its share (foreign key `ON DELETE CASCADE`, which also covers the daily cleanup).
 
 ### `POST /api/v1/analyze`
 
@@ -211,7 +217,7 @@ Branch on `error.code`; `error.message` is safe to show users. `error_message` r
 | 404 | `not_found`, `disabled` (local Chrome import switched off) |
 | 413 | `payload_too_large` |
 | 415 | `unsupported_media_type`, `unsupported_sqlite` |
-| 422 | `missing_file`, `empty_file`, `unsupported_format`, `corrupt_sqlite`, `no_entries`, `analysis_failed`, `nothing_to_share`, `invalid_report`, `chrome_read_failed`, `invalid_email`, `invalid_currency`, `invalid_plan` |
+| 422 | `invalid_card_dimensions`, `missing_file`, `empty_file`, `unsupported_format`, `corrupt_sqlite`, `no_entries`, `analysis_failed`, `nothing_to_share`, `invalid_report`, `chrome_read_failed`, `invalid_email`, `invalid_currency`, `invalid_plan` |
 | 429 | `rate_limited` |
 | 503 | `checkout_unavailable` |
 
@@ -429,7 +435,8 @@ What `fly.toml` sets up:
 | `GEMINI_MODEL` | `fly secrets set` | no | Defaults to `gemini-2.5-flash-lite` |
 | `LOCAL_CHROME_IMPORT` | – | no | Leave unset in production: `GET /api/v1/chrome` stays off (404) |
 | `WEB_URL` | `fly secrets set` | yes, for billing | Where the web app lives, e.g. `https://browsewrapped.app`; used for checkout return links. Default `http://localhost:5173` |
-| `API_PUBLIC_URL` | `fly secrets set` | yes, for billing | This API's public URL, e.g. `https://browsewrapped-api.fly.dev`. Default `http://localhost:3000` |
+| `API_PUBLIC_URL` | `fly secrets set` | yes, for billing and share previews | This API's public URL, e.g. `https://browsewrapped-api.fly.dev`; used in `preview_url` and the fake checkout. Default `http://localhost:3000` |
+| `OG_FALLBACK_IMAGE_URL` | `fly secrets set` | no | Preview image for shares without a card (default `${WEB_URL}/og-image.png`) |
 | `BILLING_PROVIDER` | `fly secrets set` | no | `dodo` (default in production) or `fake` (default elsewhere; refused in production) |
 | `DODO_API_KEY` | `fly secrets set` | yes, for Dodo | API key for the mode below |
 | `DODO_ENVIRONMENT` | `fly secrets set` | no | `test_mode` (default) or `live_mode` |

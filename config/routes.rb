@@ -2,11 +2,15 @@ Rails.application.routes.draw do
   get "up" => "rails/health#show", as: :rails_health_check
   root "home#show"
 
+  # Link-preview page for shared reports (Open Graph tags + redirect to the web app).
+  get "s/:token", to: "share_previews#show", as: :share_preview, format: false
+
   namespace :api do
     namespace :v1 do
       post "analyze", to: "analyses#analyze"
       resources :analyses, only: %i[create show destroy]
       resources :shared_reports, only: %i[create show destroy], param: :token
+      get "shared_reports/:token/card.png", to: "shared_reports#card", as: :shared_report_card, format: false
       get  "chrome",  to: "analyses#chrome"
       get  "sample",  to: "analyses#sample"
 
