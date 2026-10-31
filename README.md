@@ -105,6 +105,7 @@ After the rule-based `UrlCategorizer`, the job sends the most-visited domains th
 | `GEMINI_MODEL` | `gemini-2.5-flash-lite` | Model to use |
 | `AI_CATEGORISATION` | `on` | Set to `off` to disable |
 | `AI_CATEGORISATION_MAX_DOMAINS` | `50` | Domains per report sent to the LLM |
+| `AI_DAILY_DOMAIN_BUDGET` | `2000` | Hard daily ceiling (UTC day) on domains sent to the LLM. Once used up, reports use only cached answers until midnight UTC, and the log says so once |
 
 Tests use a stubbed classifier, so CI never calls the API.
 
@@ -312,6 +313,16 @@ No passwords: a Pass belongs to an email address, and any device can unlock it w
 - Pass-only endpoints use the `Entitlements` concern: `before_action :require_pass!` answers **402** `pass_required`.
 - Preview the email at `http://localhost:3000/rails/mailers/pass_mailer/magic_link`. In development emails aren't sent; in production they go over SMTP (see the env table).
 
+## Admin
+
+A small owner-only page at `/admin`, behind HTTP Basic auth from `ADMIN_USER` and `ADMIN_PASSWORD`. If either is unset, `/admin` returns **404**.
+
+- **Today (UTC):** analyses by status, shares created, Pass sales by currency, and LLM domains used against `AI_DAILY_DOMAIN_BUDGET`.
+- **Failures** in the last 7 days, grouped by `error_message`.
+- **Fix a category:** saves a `DomainCategory` with `source: "manual"`. Manual rows always win, because the AI never overwrites an existing row. The 30 most recently categorised domains are listed to review.
+
+Browsers resend Basic credentials on cross-site form posts, and the API has no session for Rails' CSRF tokens. So each admin form carries a token derived from the credentials (an HMAC with `SECRET_KEY_BASE`), and posts without it are refused.
+
 ## Tech stack
 
 - Ruby on Rails 8.1 (API mode)
@@ -434,6 +445,8 @@ What `fly.toml` sets up:
 | `GEMINI_API_KEY` | `fly secrets set` | no | Turns on AI categorisation |
 | `GEMINI_MODEL` | `fly secrets set` | no | Defaults to `gemini-2.5-flash-lite` |
 | `LOCAL_CHROME_IMPORT` | – | no | Leave unset in production: `GET /api/v1/chrome` stays off (404) |
+| `AI_DAILY_DOMAIN_BUDGET` | `fly secrets set` | no | Daily ceiling on domains sent to the LLM (default 2000) |
+| `ADMIN_USER`, `ADMIN_PASSWORD` | `fly secrets set` | no | Turn on `/admin` (HTTP Basic). Use a long random password |
 | `WEB_URL` | `fly secrets set` | yes, for billing | Where the web app lives, e.g. `https://browsewrapped.app`; used for checkout return links. Default `http://localhost:5173` |
 | `API_PUBLIC_URL` | `fly secrets set` | yes, for billing and share previews | This API's public URL, e.g. `https://browsewrapped-api.fly.dev`; used in `preview_url` and the fake checkout. Default `http://localhost:3000` |
 | `OG_FALLBACK_IMAGE_URL` | `fly secrets set` | no | Preview image for shares without a card (default `${WEB_URL}/og-image.png`) |

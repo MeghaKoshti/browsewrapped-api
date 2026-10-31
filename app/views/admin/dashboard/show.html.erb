@@ -1,0 +1,50 @@
+<% content_for :title, "BrowseWrapped admin" %>
+<% content_for :head do %><meta name="robots" content="noindex"><% end %>
+<h1>BrowseWrapped admin</h1>
+<p class="muted">Today = <%= Time.current.utc.to_date %> (UTC)</p>
+
+<div class="card">
+  <h2>Today</h2>
+  <table>
+    <tr><th>Analyses</th><td><%= @analyses_by_status.values.sum %>
+      <span class="muted">(<%= @analyses_by_status.map { |status, count| "#{status}: #{count}" }.join(", ").presence || "none" %>)</span></td></tr>
+    <tr><th>Shares created</th><td><%= @shares_today %> <span class="muted">(<%= @active_shares %> active)</span></td></tr>
+    <tr><th>Pass sales</th><td><%= @sales_count_today %>
+      <span class="muted">(<%= @sales_today.map { |currency, amount| "#{currency} #{format("%.2f", amount / 100.0)}" }.join(", ").presence || "none" %>; <%= @active_passes %> active passes)</span></td></tr>
+    <tr><th>LLM domains</th><td><%= @ai_used %> / <%= @ai_limit %></td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Failures, last 7 days</h2>
+  <% if @failures.empty? %>
+    <p class="muted">None.</p>
+  <% else %>
+    <table>
+      <tr><th>Error</th><th>Count</th></tr>
+      <% @failures.each do |message, count| %>
+        <tr><td><%= message %></td><td><%= count %></td></tr>
+      <% end %>
+    </table>
+  <% end %>
+</div>
+
+<div class="card">
+  <h2>Fix a category</h2>
+  <% if params[:saved].present? %><p>Saved <strong><%= params[:saved] %></strong> as a manual category.</p><% end %>
+  <form action="<%= admin_domain_categories_path %>" method="post" style="display:flex; gap:8px; flex-wrap:wrap">
+    <input type="hidden" name="form_token" value="<%= form_token %>">
+    <input name="domain" placeholder="example.com" required style="padding:8px">
+    <select name="category" style="padding:8px">
+      <% @categories.each do |category| %><option><%= category %></option><% end %>
+    </select>
+    <button class="primary">Save as manual</button>
+  </form>
+  <h3>Recently categorised</h3>
+  <table>
+    <tr><th>Domain</th><th>Category</th><th>Source</th><th>Confidence</th></tr>
+    <% @recent_categories.each do |row| %>
+      <tr><td><%= row.domain %></td><td><%= row.category %></td><td><%= row.source %></td><td><%= row.confidence %></td></tr>
+    <% end %>
+  </table>
+</div>

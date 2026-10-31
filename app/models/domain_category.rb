@@ -9,5 +9,9 @@ class DomainCategory < ApplicationRecord
   validates :source, inclusion: { in: SOURCES }
   validates :confidence, numericality: { in: 0..1 }, allow_nil: true
 
-  before_validation { self.domain = domain.to_s.downcase.strip.delete_prefix("www.") }
+  before_validation { self.domain = self.class.normalize_domain(domain) }
+
+  def self.normalize_domain(value)
+    value.to_s.downcase.strip.delete_prefix("www.")
+  end
 end

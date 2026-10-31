@@ -2,8 +2,9 @@
 # domains still marked "Other", reuses cached answers from DomainCategory and
 # asks the LLM (one batched call) only about domains it has never seen.
 #
-# Fail-safe: with the feature off, no API key, a timeout or a bad response,
-# the analysis simply keeps "Other" for those domains.
+# Fail-safe: with the feature off, no API key, a timeout, a bad response or
+# the daily budget used up (AiBudget), the analysis simply keeps "Other" for
+# those domains.
 #
 #   result = AiDomainCategorizer.new(entries).call
 #   result.overrides      # => { "example.dev" => "Programming" }
@@ -77,6 +78,10 @@ class AiDomainCategorizer
 
   def classify_new(domains)
     return [] if domains.empty? || @classifier.nil?
+
+    # Over the daily budget, only the cached answers are used.
+    domains = domains.first(AiBudget.take(domains.size))
+    return [] if domains.empty?
 
     answers = @classifier.classify(domains)
     answers.filter_map do |domain, answer|

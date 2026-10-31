@@ -2,6 +2,12 @@ Rails.application.routes.draw do
   get "up" => "rails/health#show", as: :rails_health_check
   root "home#show"
 
+  # Owner-only dashboard (HTTP Basic; 404 unless ADMIN_USER and ADMIN_PASSWORD are set).
+  namespace :admin do
+    root "dashboard#show"
+    resources :domain_categories, only: :create
+  end
+
   # Link-preview page for shared reports (Open Graph tags + redirect to the web app).
   get "s/:token", to: "share_previews#show", as: :share_preview, format: false
 
