@@ -1,0 +1,11 @@
+<div style="font-family: system-ui, -apple-system, Segoe UI, sans-serif; max-width: 480px; margin: 0 auto; color: #1d1d29;">
+  <h1 style="font-size: 20px;">Sign in to BrowseWrapped</h1>
+  <p>Click the button to sign in and unlock your Wrapped Pass on this device.</p>
+  <p style="margin: 24px 0;">
+    <a href="<%= @url %>" style="background: #5b3df5; color: #ffffff; padding: 12px 20px; border-radius: 8px; text-decoration: none; display: inline-block;">Sign in</a>
+  </p>
+  <p style="font-size: 14px; color: #555;">The link works once and expires in <%= @valid_minutes %> minutes.
+    If the button doesn't work, paste this address into your browser:<br>
+    <a href="<%= @url %>" style="color: #5b3df5; word-break: break-all;"><%= @url %></a></p>
+  <p style="font-size: 14px; color: #555;">If you didn't ask for this, you can ignore this email.</p>
+</div>

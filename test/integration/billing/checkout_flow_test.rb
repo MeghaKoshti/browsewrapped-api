@@ -70,7 +70,11 @@ class CheckoutFlowTest < ActionDispatch::IntegrationTest
     post "#{URI(url).path}/pay"
 
     assert_response :redirect
-    assert_equal "http://localhost:5173/billing/success?email=buyer%40example.com", response.location
+    location = URI(response.location)
+    assert_equal "http://localhost:5173/billing/success", location.to_s.split("?").first
+    query = Rack::Utils.parse_query(location.query)
+    assert_equal "buyer@example.com", query["email"]
+    assert_equal "buyer@example.com", MagicLinkToken.redeem(query["token"])
     purchase = Purchase.sole
     assert_equal "buyer@example.com", purchase.email
     assert_equal "fake", purchase.provider

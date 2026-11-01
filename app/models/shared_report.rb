@@ -10,6 +10,7 @@ class SharedReport < ApplicationRecord
   MAX_DATA_BYTES = 512.kilobytes
 
   has_secure_token :token
+  has_one :card, class_name: "ShareCard", dependent: :delete # the FK also cascades for bulk cleanup
 
   scope :active,  -> { where(expires_at: Time.current..) }
   scope :expired, -> { where(expires_at: ...Time.current) }
@@ -23,6 +24,10 @@ class SharedReport < ApplicationRecord
   # is only available on this instance (#delete_token), never stored.
   def self.build_from_report(report)
     new(data: ReportSanitizer.call(report)).tap(&:assign_delete_token)
+  end
+
+  def persona_title
+    data.dig("persona", "title").presence
   end
 
   def expired?

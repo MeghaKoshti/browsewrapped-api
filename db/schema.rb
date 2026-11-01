@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_24_110000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_24_130000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -48,6 +48,17 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_24_110000) do
     t.index ["domain"], name: "index_domain_categories_on_domain", unique: true
   end
 
+  create_table "magic_link_tokens", force: :cascade do |t|
+    t.string "email", null: false
+    t.string "token_digest", null: false
+    t.datetime "expires_at", null: false
+    t.datetime "used_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["expires_at"], name: "index_magic_link_tokens_on_expires_at"
+    t.index ["token_digest"], name: "index_magic_link_tokens_on_token_digest", unique: true
+  end
+
   create_table "purchases", force: :cascade do |t|
     t.string "email", null: false
     t.string "plan", null: false
@@ -63,6 +74,14 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_24_110000) do
     t.index ["provider", "provider_ref"], name: "index_purchases_on_provider_and_provider_ref", unique: true
   end
 
+  create_table "share_cards", force: :cascade do |t|
+    t.bigint "shared_report_id", null: false
+    t.binary "png", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["shared_report_id"], name: "index_share_cards_on_shared_report_id", unique: true
+  end
+
   create_table "shared_reports", force: :cascade do |t|
     t.string "token", null: false
     t.jsonb "data", default: {}, null: false
@@ -73,4 +92,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_24_110000) do
     t.index ["expires_at"], name: "index_shared_reports_on_expires_at"
     t.index ["token"], name: "index_shared_reports_on_token", unique: true
   end
+
+  add_foreign_key "share_cards", "shared_reports", on_delete: :cascade
 end

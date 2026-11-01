@@ -1,0 +1,31 @@
+<% content_for :title, og_title %>
+<% content_for :head do %>
+  <meta name="description" content="<%= og_description %>">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="BrowseWrapped">
+  <meta property="og:title" content="<%= og_title %>">
+  <meta property="og:description" content="<%= og_description %>">
+  <meta property="og:image" content="<%= og_image %>">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="<%= og_title %>">
+  <meta name="twitter:description" content="<%= og_description %>">
+  <meta name="twitter:image" content="<%= og_image %>">
+  <% if @web_url %>
+    <meta property="og:url" content="<%= request.original_url %>">
+    <link rel="canonical" href="<%= @web_url %>">
+    <meta http-equiv="refresh" content="0; url=<%= @web_url %>">
+  <% else %>
+    <meta name="robots" content="noindex">
+  <% end %>
+<% end %>
+<div class="card">
+  <% if @web_url %>
+    <h1><%= og_title %></h1>
+    <p><a href="<%= @web_url %>">Open the report</a></p>
+  <% else %>
+    <h1>This shared report doesn't exist or has expired</h1>
+    <p><a href="<%= AppUrls.web %>">Make your own BrowseWrapped</a></p>
+  <% end %>
+</div>

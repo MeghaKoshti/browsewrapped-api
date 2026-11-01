@@ -3,7 +3,8 @@
 # Paying posts a signed payment.succeeded webhook through the whole Rack app
 # (routing, signature check, Billing::WebhookProcessor), exactly as the real
 # provider would, but in-process: a dev server calling itself over HTTP could
-# deadlock with a single Puma thread.
+# deadlock with a single Puma thread. The success redirect also carries a
+# magic-link token (dev/test only) so the flow can be clicked through.
 class FakeCheckoutsController < HtmlController
   before_action :require_fake_billing
   before_action :load_checkout
@@ -36,8 +37,11 @@ class FakeCheckoutsController < HtmlController
     render plain: "This checkout has expired.", status: :not_found unless @checkout
   end
 
+  # The real provider can't hand us a sign-in token; the fake one adds a
+  # magic-link token so the whole flow can be clicked through locally.
   def success_url
-    "#{@checkout["success_url"]}?#{{ email: @checkout["email"] }.to_query}"
+    token = MagicLinkToken.issue!(@checkout["email"]).token
+    "#{@checkout["success_url"]}?#{{ email: @checkout["email"], token: token }.to_query}"
   end
 
   def deliver_webhook(headers, body)
