@@ -1,0 +1,41 @@
+# Render Blueprint for the BrowseWrapped API (the live setup).
+# Free web service in Singapore, built from the Dockerfile, with the database on
+# Neon's free plan (set DATABASE_URL to Neon's *direct* connection string).
+# Secrets marked `sync: false` are entered in the Render dashboard, never here.
+services:
+  - type: web
+    name: browsewrapped-api
+    runtime: docker
+    plan: free
+    region: singapore
+    healthCheckPath: /up
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY_BASE
+        generateValue: true
+      # Render routes traffic to port 10000; Thruster listens on HTTP_PORT.
+      - key: HTTP_PORT
+        value: "10000"
+      # Background analyses and daily cleanups run inside Puma (no worker service on the free plan).
+      - key: SOLID_QUEUE_IN_PUMA
+        value: "true"
+      # The free instance has 512 MB RAM and uploads are parsed in memory, so cap them at 25 MB.
+      - key: ANALYSIS_MAX_UPLOAD_BYTES
+        value: "26214400"
+      - key: CORS_ORIGINS
+        value: https://browsewrapped.vercel.app
+      - key: WEB_URL
+        value: https://browsewrapped.vercel.app
+      - key: API_PUBLIC_URL
+        value: https://browsewrapped-api.onrender.com
+      - key: RAILS_LOG_LEVEL
+        value: info
+      # Optional: AI categorisation for unknown domains (leave unset to stay fully free).
+      - key: GEMINI_API_KEY
+        sync: false
+      # Owner-only admin (HTTP Basic). Leave unset to keep /admin off.
+      - key: ADMIN_USER
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
